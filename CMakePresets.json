@@ -53,11 +53,11 @@
     }
   ],
   "buildPresets": [
-    { "name": "release", "configurePreset": "release", "configuration": "Release", "targets": [ "{{ProductId}}_VST3", "{{ProductId}}_Standalone", "{{ProductId}}Harness" ] },
-    { "name": "debug", "configurePreset": "debug", "targets": [ "{{ProductId}}_VST3", "{{ProductId}}Harness" ] },
-    { "name": "asan", "configurePreset": "asan", "targets": [ "{{ProductId}}_VST3", "{{ProductId}}Harness" ] },
-    { "name": "tsan", "configurePreset": "tsan", "targets": [ "{{ProductId}}_VST3", "{{ProductId}}Harness" ] },
-    { "name": "rtsan", "configurePreset": "rtsan", "targets": [ "{{ProductId}}Harness" ] }
+    { "name": "release", "configurePreset": "release", "configuration": "Release", "targets": [ "CleanUp_VST3", "CleanUp_Standalone", "CleanUpHarness" ] },
+    { "name": "debug", "configurePreset": "debug", "targets": [ "CleanUp_VST3", "CleanUpHarness" ] },
+    { "name": "asan", "configurePreset": "asan", "targets": [ "CleanUp_VST3", "CleanUpHarness" ] },
+    { "name": "tsan", "configurePreset": "tsan", "targets": [ "CleanUp_VST3", "CleanUpHarness" ] },
+    { "name": "rtsan", "configurePreset": "rtsan", "targets": [ "CleanUpHarness" ] }
   ],
   "testPresets": [
     { "name": "fast", "configurePreset": "release", "filter": { "include": { "label": "fast" } }, "output": { "outputOnFailure": true } },

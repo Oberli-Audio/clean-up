@@ -7,12 +7,12 @@ namespace
 // Placeholder colours in the brand's two themes (plugin-ui-bob oberli-audio-brand.md); the
 // real tokens come with the LookAndFeel at G2.
 struct Theme { juce::Colour bg, ink, accent; };
-constexpr bool kBone = std::string_view ("{{theme}}") == "bone";
-const Theme theme = kBone ? Theme { juce::Colour (0xFFF3EEE4), juce::Colour (0xFF1C1B19), juce::Colour (0xFF{{AccentHexBare}}) }
-                          : Theme { juce::Colour (0xFF1C1B19), juce::Colour (0xFFF3EEE4), juce::Colour (0xFF{{AccentHexBare}}) };
+constexpr bool kBone = std::string_view ("bone") == "bone";
+const Theme theme = kBone ? Theme { juce::Colour (0xFFF3EEE4), juce::Colour (0xFF1C1B19), juce::Colour (0xFFF4511E) }
+                          : Theme { juce::Colour (0xFF1C1B19), juce::Colour (0xFFF3EEE4), juce::Colour (0xFFF4511E) };
 } // namespace
 
-{{ProductId}}AudioProcessorEditor::{{ProductId}}AudioProcessorEditor ({{ProductId}}AudioProcessor& p)
+CleanUpAudioProcessorEditor::CleanUpAudioProcessorEditor (CleanUpAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setWantsKeyboardFocus (false);   // the space bar keeps reaching the host's transport
@@ -53,12 +53,12 @@ const Theme theme = kBone ? Theme { juce::Colour (0xFFF3EEE4), juce::Colour (0xF
     setSize (juce::jmax (360, 60 + 110 * (int) controls.size()), 220);
 }
 
-void {{ProductId}}AudioProcessorEditor::paint (juce::Graphics& g)
+void CleanUpAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme.bg);
 }
 
-void {{ProductId}}AudioProcessorEditor::resized()
+void CleanUpAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (20);
     auto header = area.removeFromTop (32);

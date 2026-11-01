@@ -1,4 +1,23 @@
 id,version_added,type,kind,name,short,group,core,unit,min,max,default,centre,bipolar,choices,steps,format_kind,precision,parse_aliases,automatable,smoothing,smoothing_domain,control_rate,meaning,tooltip,notes
-mix,1,float,plain,Mix,Mix,Output,Y,%,0,100,100,,N,,0,percent,0,,Y,20,linear,block,dry / balanced / wet,Dry to wet balance (equal power),
-outGain,1,float,plain,Output,Out,Output,Y,dB,-24,12,0,,Y,,0,db,1,,Y,20,db,block,quiet / unity / loud,Output level after the mix,
-bypass,1,bool,bypass,Bypass,Bypass,Output,N,,0,1,0,,N,,2,bool,0,,Y,0,crossfade,event,,Bypass the plugin (latency compensated),
+humOn,1,bool,plain,Hum,Hum,Hum,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Removes mains hum and its harmonics,Off = bypassed in code
+humDepth,1,float,plain,Depth,Depth,Hum,Y,dB,-60,0,-24,,N,,0,db,1,,Y,20,db,block,,How deep the notches cut,
+humHarmonics,1,int,plain,Harmonics,Harmon,Hum,N,,1,16,8,,N,,16,plain,0,,Y,0,crossfade,event,,How many multiples are notched; buzz needs more than hum,
+humWidth,1,float,plain,Width,Width,Hum,N,Hz,0.5,10,2,2,N,,0,hz,1,,Y,20,log,block,,Notch width; wider follows unstable mains,
+humFreq,1,float,plain,Frequency,Freq,Hum,N,Hz,40,70,50,55,N,,0,hz,2,,Y,50,linear,block,,"Mains fundamental; Find measures it, tracking follows drift",
+clickOn,1,bool,plain,Click,Click,Click,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Repairs clicks and crackle,
+clickThreshold,1,float,plain,Threshold,Thresh,Click,Y,%,0,100,55,,N,,0,percent,0,,Y,20,linear,block,only loud clicks / balanced / everything,"Lower catches more clicks, and also drum hits",
+clickLength,1,float,plain,Length,Length,Click,N,ms,0.2,10,2.5,2.5,N,,0,time,1,,Y,20,log,block,,The longest span repaired as one click,
+clickCrackle,1,float,plain,Crackle,Crackle,Click,N,%,0,100,0,,N,,0,percent,0,,Y,20,linear,block,,Adds repair of dense tiny clicks,
+clickMode,1,choice,plain,Mode,ClkMode,Click,N,,0,1,0,,N,Clicks|Crackle,2,choice,0,,Y,0,crossfade,event,,"Clicks for isolated pops, Crackle for dense noise",
+noiseOn,1,bool,plain,Noise,Noise,Noise,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Reduces steady hiss and noise,
+noiseReduction,1,float,plain,Reduction,Reduce,Noise,Y,dB,-30,0,-12,,N,,0,db,1,,Y,20,db,block,,How much of the noise floor is taken away,
+noiseSmooth,1,float,plain,Smooth,Smooth,Noise,N,%,0,100,40,,N,,0,percent,0,,Y,20,linear,block,,Slower gain avoids watery artefacts,
+noiseFloor,1,float,plain,Floor,Floor,Noise,N,dB,-90,-20,-60,,N,,0,db,1,,Y,20,db,block,,The noise level assumed; Learn or Adaptive set it,
+noiseMode,1,choice,plain,Profile,Profile,Noise,N,,0,1,1,,N,Learned|Adaptive,2,choice,0,,Y,0,crossfade,event,,"Learned uses a captured profile, Adaptive follows the floor",Profile is plugin state
+reverbOn,1,bool,plain,Reverb,Reverb,Reverb,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Reduces the room tail behind the source,
+reverbAmount,1,float,plain,Amount,Amount,Reverb,Y,%,0,100,35,,N,,0,percent,0,,Y,20,linear,block,,How much of the room's tail is removed,
+reverbTail,1,float,plain,Tail,Tail,Reverb,N,s,0.2,4,0.9,1.0,N,,0,time,2,,Y,20,log,block,,How long the room rings; Estimate measures it,
+reverbAttacks,1,float,plain,Attacks,Attacks,Reverb,N,%,0,100,60,,N,,0,percent,0,,Y,20,linear,block,,Keeps attacks untouched so consonants stay sharp,
+listen,1,choice,plain,Listen,Listen,Output,Y,,0,2,0,,N,Output|Removed|Input,3,choice,0,,Y,0,crossfade,event,,Removed plays only what was taken away,"Global only, no per-module listen"
+trim,1,float,plain,Trim,Trim,Output,N,dB,-24,24,0,,Y,,0,db,1,,Y,20,db,block,,Output level,
+bypass,1,bool,bypass,Bypass,Bypass,Output,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Bypass the plugin (latency compensated),

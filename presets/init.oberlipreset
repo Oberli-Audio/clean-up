@@ -2,11 +2,32 @@
 
 <OberliPreset name="Init" author="Oberli Audio" category="Bed"
               description="The parameter table's defaults."
-              pluginVersion="0.1.0" created="{{Date}}" factory="true">
-  <{{ProductId}}State version="1" dspVersion="1">
+              pluginVersion="0.1.0" created="2026-11-01" factory="true">
+  <CleanUpState version="1" dspVersion="1">
     <PARAMETERS>
-{{InitParams}}
+      <PARAM id="humOn" value="0"/>
+      <PARAM id="humDepth" value="-24"/>
+      <PARAM id="humHarmonics" value="8"/>
+      <PARAM id="humWidth" value="2"/>
+      <PARAM id="humFreq" value="50"/>
+      <PARAM id="clickOn" value="0"/>
+      <PARAM id="clickThreshold" value="55"/>
+      <PARAM id="clickLength" value="2.5"/>
+      <PARAM id="clickCrackle" value="0"/>
+      <PARAM id="clickMode" value="0"/>
+      <PARAM id="noiseOn" value="0"/>
+      <PARAM id="noiseReduction" value="-12"/>
+      <PARAM id="noiseSmooth" value="40"/>
+      <PARAM id="noiseFloor" value="-60"/>
+      <PARAM id="noiseMode" value="1"/>
+      <PARAM id="reverbOn" value="0"/>
+      <PARAM id="reverbAmount" value="35"/>
+      <PARAM id="reverbTail" value="0.9"/>
+      <PARAM id="reverbAttacks" value="60"/>
+      <PARAM id="listen" value="0"/>
+      <PARAM id="trim" value="0"/>
+      <PARAM id="bypass" value="0"/>
     </PARAMETERS>
     <Extra/>
-  </{{ProductId}}State>
+  </CleanUpState>
 </OberliPreset>
