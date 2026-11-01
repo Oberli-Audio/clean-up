@@ -6,7 +6,7 @@ Guidance for Claude Code in this repository.
 
 Clean Up (Oberli Audio), an effect plugin (VST3; the formats ship.toml lists), built with
 JUCE pinned by commit (CMakeLists.txt) and started from the family template
-(Oberli-Audio/plugin-template). Theme bone, accent ember (#F4511E), plugin code
+(Oberli-Audio/plugin-template). Theme bone, accent sage (#33B679; category accent for mix tools, decided 2026-11-01, registry update pending in bob-skills), plugin code
 `Clup`, bundle id `com.oberliaudio.cleanup`: all from the family registry (ship-bob
 `registry/plugins.toml`), never changed after the first release.
 
