@@ -65,3 +65,10 @@ open_questions: []
 
 ## Amendments
 - 2026-11-01: Owner decisions confirmed with the brief: four modules; Removed listen is global only at every tier; accent ember (coral belongs to Sunday Organ). LookAndFeel, meters and the FFT/analysis helpers come from the shared Source/oberli/ code (bob-skills).
+- 2026-11-01: **Accent superseded by the category scheme** (owner, same day): one accent per
+  category instead of one per plugin - sage #33B679 for mix tools, peacock #039BE5 for
+  analysis. Clean Up is a mix tool (it repairs material early in the chain; the sonogram is
+  its readout, not its job), so the accent is **sage #33B679**. `CLAUDE.md` and `docs/sketch.md`
+  carry it from main; the family registry in bob-skills is still to follow. Gates re-opened:
+  none on the sound side; the editor has not been built yet (it is the template stub until the
+  shared `Source/oberli/` lands), so sage is the accent it will be built with - no rework.

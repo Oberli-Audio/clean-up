@@ -1,8 +1,30 @@
 # Status - Clean Up 0.1.0 (2026-11-01)
-Tier P, track E, at gate G2. Recipe D.8.1.
+Tier P, track E, at gate G3 (paused by the owner mid-G3). Recipe D.8.1.
 
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
+
+- 2026-11-01 **Latency is 54.7 ms at 48 kHz, not the brief's ~43 ms.** The brief's
+  `latency_budget` reads "2048-frame STFT plus click lookahead (about 43 ms)", but a 2048 frame
+  at 4x overlap costs `frame - hop` = 1536 samples on its own, and the output FIFO needs one hop
+  because a host block is not a multiple of the hop. The honest budget is `hop + (frame - hop) +
+  lookahead` = `frame + lookahead` = 2048 + 576 = **2624 samples = 54.7 ms**, reported and
+  verified by the impulse test. Options if that is too much: (a) accept 54.7 ms - my
+  recommendation, the plugin is for recorded material and the live rig is a stream, not a
+  monitor path; (b) cap Length at 5 ms and shorten the click lookahead to 6 ms -> 48.7 ms;
+  (c) a 1024 frame -> 32.7 ms, at the cost of the frequency resolution the hum and noise
+  estimators live on. Say which.
+- 2026-11-01 **`clickThreshold`'s sigma range is 40-6, not the sketch's 12-3.** Measured: at
+  the sketch's mapping the default 55 % is 7 sigma, and a voice's glottal pulses are the AR
+  model's own excitation, so the detector fired once per pitch period - **721 repairs on a
+  clean vocal**. At 40-6 (default 55 % = 21 sigma) that is 3, with 97 of 100 clicks still
+  caught and 0 false repairs on a snare. The knob's direction is unchanged.
+- 2026-11-01 **EX-1 below: 97 of 100 clicks caught, not all 100.** The brief asks for all.
+- 2026-11-01 **The Noise module's Reduction knob does not yet deliver its number** (see the
+  G3 table): asking -12 dB gives 7.3 dB of measured broadband reduction, and the module
+  saturates at 8.6 dB however deep the floor is set. That is the periodogram's heavy tail, not
+  a bug, and the fix in hand is to calibrate the knob so it means what the CSV says it means
+  ("how much of the noise floor is taken away"). **This is where the work was paused.**
 
 - 2026-11-01 **Shared code `Source/oberli/` is not in the template yet.** LookAndFeel, Strip
   frame, meters, Loudness, **Analysis/FFT**, References, RenderSafety are built in
@@ -36,30 +58,75 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 |---|---|---|
 | G0 | closed 2026-11-01 | `docs/brief.md` owner-confirmed, from `docs/sketch.md` |
 | G1 | closed 2026-11-01 | see Decisions: four families, four departures, each with the measurement that rejects it |
-| G2 | open | numpy prototype in the port's structure (`sound design/prototype/`) |
-| G3 | - | |
+| G2 | closed 2026-11-01 | `python3 "sound design/prototype/cleanup_proto.py" --selftest` -> 17 checks, all green (Burg against a known AR(2), the bell against its own biquad, all-off bit-exact, WOLA passthrough, latency = frame + lookahead, bypass a delayed wire, two runs bit-identical, block size irrelevant, finite at all six rates, Output + Removed = Input) |
+| G3 | **open, paused** | per target below; `python3 "sound design/prototype/measure.py" <what>` |
 | G4 | - | |
 | G5 | - | |
 | G6 | - | |
 | G7 | - | |
 
+### G3 metric table (as measured, 2026-11-01)
+Every row is one `measure.py` subcommand; the seed and the material are in its own output.
+
+| Target (brief) | Measured | Verdict |
+|---|---|---|
+| all modules off null exactly | -300.0 dBFS (bit-exact) | pass |
+| bypass is latency-compensated and nulls | -300.0 dBFS | pass |
+| Output + Removed = Input | -300.0 dBFS | pass |
+| latency reported = measured, Hum only | 0 samples | pass |
+| latency reported = measured, any spectral module | 2624 samples = 54.7 ms | pass, but see Waiting |
+| 50 Hz + 8 harmonics at -40 dBFS go below -90 dBFS | **-101.8 dBFS** | pass |
+| a 100 Hz note loses at most Depth dB | 11.8 dB at Depth -60, 11.8 at -24 | pass |
+| the tracker follows mains drift | 50.18 Hz on +/-0.3 Hz drift | pass |
+| Depth 0 dB bypasses the comb | -300.0 dBFS | pass |
+| Find measures the mains frequency | 50.00 Hz | pass |
+| 100 clicks 0.5-3 ms all caught at Threshold 55 % | **97 of 100** | EX-1 |
+| 0 false repairs on a snare at Threshold 55 % | **0** | pass |
+| per-click repair residual | median -31.7 dBFS, improvement 18.8 dB, worst -10.3 | pass (median bar) |
+| a clean vocal is left alone | 3 repairs, residual -42.3 dBFS | pass |
+| -50 dBFS pink reduced 12 +/- 1 dB in the gaps | **7.3 dB (module ceiling 8.6 dB)** | **fail, in hand** |
+| no musical noise above -60 dBFS at Smooth 40 % | -57.7 dBFS | fail, follows the row above |
+| Reduction 0 dB passes through | -143.9 dBFS | pass |
+| Learn captures a profile | yes, gaps reach -58.3 dBFS | pass |
+| 1.2 s RT60 reads <= 0.6 s at Amount 50 % | not yet run | - |
+| onsets within 1 dB at Attacks 60 % | not yet run | - |
+| Estimate measures the tail | not yet run | - |
+| all four modules on: health, max_click_db, Removed data | not yet run | - |
+
 ## Listening debt
-- 2026-11-01: nothing rendered yet; the G3 reference renders will be listed here as pairs
-  (flawed / repaired) per module.
+- 2026-11-01: nothing heard yet. `python3 "sound design/prototype/measure.py" renders` writes
+  `<module>-in.wav`, `-out.wav` and `-removed.wav` for all four modules into
+  `sound design/renders/` (gitignored, reproducible to the bit from the seed). The pairs to A/B
+  at the listening checkpoint: hum on the bass line, clicks on the vocal, pink noise on the
+  vocal, the 1.2 s room on the vocal. **Not yet rendered - paused before it.**
 
 ## Open exceptions
-- none yet.
+- EX-1 2026-11-01: brief target "100 synthetic 0.5-3 ms clicks all caught"; measured **97 of
+  100** by `python3 "sound design/prototype/measure.py" click` (vocal + 100 clicks at amplitude
+  0.5, Threshold 55 %, Length 3.5 ms, seed 6). Shipping is acceptable because each of the three
+  coincides with an edge in the music - one inside a sibilant burst, two straddling a phrase
+  end into silence - where the level-step test has to choose between missing a click and
+  repairing a transient, and a click masked by a sibilant is not audible. Threshold does not
+  buy them back (40 %: 95, 70 %: 97, 100 %: 96 with 526 repairs on a clean vocal), so this is
+  the design's ceiling, not a setting. **Unacceptable if** fewer than 95 of 100, as the test
+  `clicks caught (of 100)` asserts, or if a snare gains a single false repair.
+  Friends: a click sitting exactly on a consonant or on the last note of a phrase may survive.
 
 ## Handoff
 Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
-Plan: 1. [x] G1 decisions 2. [ ] G2 numpy prototype (next) 3. [ ] G3 measure
-4. [ ] G4 C++ port 5. [ ] harness hooks and tests 6. [ ] G5 null 7. [ ] G6 validate
-8. [ ] G7 bank and documents.
+Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - null, latency, hum,
+click done; **Noise's Reduction calibration is the open point**; reverb, all-four and the
+reference renders not yet run 4. [ ] G4 C++ port 5. [ ] harness hooks and tests 6. [ ] G5 null
+7. [ ] G6 validate 8. [ ] G7 bank and documents.
 Working tree: clean. Build: red on purpose (the template processor still references
 `Params::outGain` and `Params::mix`, which the real `parameters.csv` does not have; the
-processor is rewritten at G4). Tests: not registered yet (no harness binary).
+processor is rewritten at G4). Tests: the prototype selftest is green (17 checks); the CTest
+suite is not registered yet (no harness binary).
 Open questions for the owner: the Waiting for Björn section above.
-Next command: `python3 "sound design/prototype/measure.py" --all`
+Next command, to resume exactly where this stopped:
+`python3 "sound design/prototype/measure.py" noise` - then calibrate the Reduction knob so the
+measured broadband reduction equals the number on the knob (the floor-to-achieved table is in
+Decisions below), then `reverb`, `all-four`, `renders`.
 
 ## Decisions
 
@@ -139,3 +206,66 @@ model for STFT/spectral effects**". Burg's method, a dense STFT with per-bin dec
 state and an AR extrapolator are not Faust's shape, and G5 nulls against the numpy model
 (same table, G5 row). Faust is also not installed on this machine. No Faust library function
 is used anywhere, so `notices.toml` gains no `kind = "faust"` entry.
+
+### 2026-11-01 G2/G3, what measuring changed in the design
+Each of these was found by a measurement, not by reading the code; each constant is named and
+commented at its definition in `sound design/prototype/cleanup_proto.py`.
+
+- **The notch Width was scaling with Depth.** Simper's published bell uses `k = 1/(Q A)`, so at
+  Depth -60 dB (A = 0.0316) a 2 Hz Width came out 63 Hz wide and the comb ate the bass: a
+  100 Hz note lost 61.5 dB where the target is at most Depth. The bell's centre gain is `A^2`
+  for *any* k, so k is now the bandwidth outright (`k = Width / f0`) and Width is the -3 dB
+  bandwidth, measured: -59.9 dB at the centre, -3.03 dB at +1 Hz, -0.009 dB at 20 Hz away.
+- **The hum tracker needed a warm-up gate.** Its first, meaningless estimates pushed the track
+  17 mHz off and the 2 s loop then took 8 s to creep back: -80 dBFS of hum over 1-2 s against
+  -91 over 3-4 s. With the loop held open for 5 I/Q time constants (1 s) the track holds 50 Hz
+  to 80 microhertz and the comb reaches -101.8 dBFS. A frozen comb reaches the same, which is
+  how the residual was attributed to tracking error rather than to coefficient modulation.
+  `|H(f0+d)| = max(A^2, 2 d / Width)` is why: at 2 Hz Width a 10 mHz error is -40 dB, not -60.
+- **The click detector was rebuilt four times, each time on a number.** A leaky integrator over
+  e^2 let 100 clicks in 6 s mask each other (32 of 100 caught); clamping its update made vocal
+  onsets and snare hits cross the threshold (36 false repairs); a robust per-block MAD sigma
+  fixed both but collapses to zero in digital silence (863 detections for 100 clicks), so the
+  threshold has an absolute floor at -80 dBFS. Runs truncated at the hop boundary looked short,
+  and a short run is what the detector takes for a click, so the scanner now carries an open
+  run across segments. A snare attack still settles into a well-predicted noise burst after
+  ~95 samples, so run length alone cannot tell an attack from a click: the level-step test
+  (context RMS either side, 12 dB) does, and took the snare to 0. Detection and repair now use
+  different orders - 32 to detect (14 false detections on a clean vocal against 442 at order
+  256, because an over-fitted model shrinks sigma with the error), 192 to repair (median
+  per-click residual -31.5 dBFS at 32, -42.0 at 192, -43.5 at 256), the repair model fitted
+  lazily at most once per hop. The detection model is fitted on history + segment + lookahead,
+  not on clean history alone: 3 false repairs and -42.3 dBFS on a clean vocal against 9 and
+  -16.3 dBFS. And the edge crossfade was sitting on the click itself - for a 0.5 ms click, 16
+  of its 24 samples were inside the two seams - so the repair now extends by the crossfade on
+  each side.
+- **Minimum statistics was taking the minimum of the raw periodogram** and read 21.8 dB low
+  (the minimum of N exponential samples has mean 1/N of their mean; a 1.5 s window at a 10.7 ms
+  hop is N = 140). Martin's method smooths first; with a 200 ms per-bin smoother the bias is
+  1.8 dB, calibrated by `measure.py noise --calibrate`. The engine's priming zeros also pinned
+  the estimate at zero for the first 1.5 s, so the tracker starts at the first frame with any
+  energy, with the whole ring primed from it.
+
+### 2026-11-01 open: the Noise module's Reduction knob (where work paused)
+`noiseReduction` is a **per-bin gain floor**, but the brief measures the **broadband** drop of
+the floor in the gaps, and a decision-directed Wiener deliberately keeps bins that look like
+signal. The periodogram of stationary noise is exponential, its tail is heavy, and the bins
+with large gamma carry most of the energy, so the achieved reduction saturates far short of the
+floor. Measured on the vocal + -50 dBFS pink, Smooth 40 %, Adaptive:
+
+| `noiseReduction` (floor) | measured broadband reduction | deficit |
+|---|---|---|
+| -3 dB | 2.69 dB | 0.31 dB |
+| -6 dB | 4.81 dB | 1.19 dB |
+| -12 dB | 7.33 dB | 4.67 dB |
+| -18 dB | 8.21 dB | 9.79 dB |
+| -24 dB | 8.48 dB | 15.52 dB |
+| -30 dB | 8.56 dB | 21.44 dB |
+| -42 dB | 8.60 dB | 33.40 dB |
+
+Smoothing the a-posteriori SNR (the standard musical-noise fix) moves the ceiling to 8.3 dB at
+30 ms and no further, and the vocal itself is untouched either way (0.00 dB change over a
+phrase), so the ceiling is the gain law, not the estimator. The knob's own meaning in
+`parameters.csv` is "How much of the noise floor is taken away", so the fix in hand is to make
+the knob deliver that number - the floor becomes a function of Reduction calibrated against
+this table - rather than to re-label the knob as a per-bin floor. **Not yet implemented.**
