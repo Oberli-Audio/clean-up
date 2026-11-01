@@ -14,7 +14,7 @@ Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent Sage #33B679 
 3. Never damage what is fine: each module is nullable when off or at zero, attacks survive de-reverb, speech survives denoise.
 4. Run on a live-stream vocal with acceptable latency (one STFT frame) and leave the rest of the chain alone.
 
-**Context.** On a track, early in the chain (before compression, which would raise the flaws). Used on recorded material mostly, in the live mix for hum and noise only. Window open while dialling, then closed.
+**Context.** On a track, early in the chain (before compression, which would raise the flaws). Used on recorded material mostly, in the live mix for hum and noise only. Window open while dialing, then closed.
 
 **Success.** A 50 Hz hum with 8 harmonics at -40 dBFS vanishes to below -90 dBFS with no audible notch on a bass guitar; 100 synthetic clicks of 0.5-3 ms are all caught with none missed and no false repair on a snare hit; -50 dBFS pink noise is reduced 12 dB on a vocal with no musical-noise warble; a 1.2 s RT60 vocal reads as a 0.5 s room at Amount 50 % with the consonants intact; every module nulls when off.
 
