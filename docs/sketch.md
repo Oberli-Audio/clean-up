@@ -44,7 +44,7 @@ Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent Sage #33B679 
 | humDepth | float | Depth | Hum | dB | -60 / 0 / -24 |
 | humHarmonics | int | Harmonics | Hum | - | 1 / 16 / 8 |
 | humWidth | float | Width | Hum | Hz | 0.5 / 10 / 2 |
-| humFreq | float | Frequency | Hum | Hz, centre 55 | 40 / 70 / 50 |
+| humFreq | float | Frequency | Hum | Hz, center 55 | 40 / 70 / 50 |
 | clickOn | bool | Click | Click | - | 0 / 1 / 0 |
 | clickThreshold | float | Threshold | Click | % | 0 / 100 / 55 |
 | clickLength | float | Length | Click | ms | 0.2 / 10 / 2.5 |
@@ -57,7 +57,7 @@ Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent Sage #33B679 
 | noiseMode | choice | Profile | Noise | Learned \| Adaptive | 0 / 1 / 1 |
 | reverbOn | bool | Reverb | Reverb | - | 0 / 1 / 0 |
 | reverbAmount | float | Amount | Reverb | % | 0 / 100 / 35 |
-| reverbTail | float | Tail | Reverb | s, centre 1.0 | 0.2 / 4 / 0.9 |
+| reverbTail | float | Tail | Reverb | s, center 1.0 | 0.2 / 4 / 0.9 |
 | reverbAttacks | float | Attacks | Reverb | % | 0 / 100 / 60 |
 | listen | choice | Listen | Output | Output \| Removed \| Input | 0 / 2 / 0 |
 | trim | float | Trim | Output | dB, bipolar | -24 / +24 / 0 |
@@ -74,7 +74,7 @@ Tooltips (one sentence; the generator appends range and default):
 - Length: "The longest span that is repaired as one click."
 - Crackle: "Adds repair of dense tiny clicks, like a worn record."
 - Reduction: "How much of the noise floor is taken away."
-- Smooth: "Slower gain changes avoid watery artefacts at the cost of some noise between words."
+- Smooth: "Slower gain changes avoid watery artifacts at the cost of some noise between words."
 - Floor: "The noise level Clean Up assumes; Learn or Adaptive set it, you can override."
 - Amount: "How much of the room's tail is removed."
 - Tail: "How long the room rings; Estimate measures it."
@@ -101,7 +101,7 @@ Listen Removed = in (delayed by the latency) minus out
 - Notches are second-order with Width as the -3 dB bandwidth; Depth limits the cut so a bass note on a harmonic loses at most Depth dB; the comb is bypassed below -60 dB Depth.
 
 ### 4.3 Click
-- Detector: AR(32) by Burg on 10 ms blocks, prediction error normalised by its local RMS (50 ms); a click starts when the normalised error exceeds the threshold (Threshold maps 0-100 % to 12-3 sigma) and ends after at most Length ms; two clicks closer than 1 ms merge.
+- Detector: AR(32) by Burg on 10 ms blocks, prediction error normalized by its local RMS (50 ms); a click starts when the normalized error exceeds the threshold (Threshold maps 0-100 % to 12-3 sigma) and ends after at most Length ms; two clicks closer than 1 ms merge.
 - Repair: least-squares AR interpolation across the span using 64 samples on each side; a crossfade of 8 samples at the edges.
 - Crackle: blends in a second detector with AR(8) and Length clamped to 0.5 ms, weighted by the Crackle percentage.
 - Counter: caught clicks in the last 6 s, the longest, and "missed" from a second pass on the output with a lower threshold (what the user would still hear), so the readout is honest.
