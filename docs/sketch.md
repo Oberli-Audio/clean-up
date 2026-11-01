@@ -1,6 +1,6 @@
 # Clean Up - declick, dehum, denoise, de-reverb (Tier S sketch)
 
-Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent ember #F4511E (coral is taken by Sunday Organ in the family registry; jade: A B see, iris: Less S, saffron: Align, lime: Bench Line, mango: Horizon Pad). Static frame: `clean-up@1x.png` (1000 x 604 at 100 %), `clean-up@2x.png` for Retina viewing. Sound side: sound-design-bob is needed for four estimators (adaptive notch comb, AR click detector and interpolator, spectral noise gain, late-reverb envelope); this sketch states what each must do and the evidence that proves it.
+Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent Sage #33B679 (mix tools, category scheme confirmed 2026-11-01). Static frame: `clean-up@1x.png` (1000 x 604 at 100 %), `clean-up@2x.png` for Retina viewing. Sound side: sound-design-bob is needed for four estimators (adaptive notch comb, AR click detector and interpolator, spectral noise gain, late-reverb envelope); this sketch states what each must do and the evidence that proves it.
 
 ## 1. G0 brief
 
@@ -32,7 +32,7 @@ Tier S, gate G0-G2 sketch. Oberli Audio effect, Bone theme, accent ember #F4511E
 
 1. **Window** 1000 x 604 at 100 %, Bone; four modules side by side in signal-flow order, each 196 px, one on/off pill in its title row; one sonogram well.
 2. **Hero** is what the ear cannot judge: the input sonogram with everything Clean Up removed drawn over it in the accent (hum lines, click ticks, reverb-tail patches, the noise floor as a tint), with a Listen segment Output / Removed / Input above it, and the four activity readouts under it in words ("7 clicks in 6 s · longest 1.8 ms · 0 missed").
-3. **Accent** ember on the set and active only: value arcs and pointers, lit module LEDs, selected segments, and the removed energy on the sonogram, since that is the plugin's action. The meters are ink.
+3. **Accent** Sage on the set and active only: value arcs and pointers, lit module LEDs, selected segments, and the removed energy on the sonogram, since that is the plugin's action. The meters are ink.
 4. **Sections** from the table's groups: Hum, Click, Noise, Reverb, the Removed display (no parameters), Output (Trim 64 px, In and Out meters; no Mix knob, utility without a wet path, the A B see line for the brand sheet).
 5. **States**: modified (pill dims), drawer, About (charcoal page), bypass, module off (its knobs dim to `ink-subtle` arcs, the pill LED unlit, its overlay disappears from the sonogram), Learn capturing (1 s hairline progress under the Learn button, then the pill reads Learned), Find and Estimate running (same hairline, 200 ms), Removed listen (header pill shows "Listening: Removed" in `ink-subtle`, the sonogram shows the removed energy alone), Hum only (header meta "0 ms" instead of 43 ms).
 
@@ -152,7 +152,7 @@ Listen Removed = in (delayed by the latency) minus out
 
 ## 7. Open decisions for Björn
 - Decided 2026-11-01: name Clean Up (slug `clean-up`, plugin ID `CleanUp`); four modules (Hum, Click, Noise, Reverb); Removed listen is global only, at every tier, no per-module listen.
-- Accent: ember (coral belongs to Sunday Organ). Ember sits near the Bone `clip` red #B02A24; clip always carries the word CLIP, so the two stay apart.
+- Accent: Sage #33B679, by the category scheme (decided 2026-11-01): one accent per category, mix tools.
 
 ## 8. Report
 ```
