@@ -123,6 +123,8 @@ Working tree: clean. Build: red on purpose (the template processor still referen
 processor is rewritten at G4). Tests: the prototype selftest is green (17 checks); the CTest
 suite is not registered yet (no harness binary).
 Open questions for the owner: the Waiting for Björn section above.
+To take the work up in the local session (Claude Code in Visual Studio / VS Code): the
+self-contained prompt is the second section of `docs/kickoff.md`.
 Next command, to resume exactly where this stopped:
 `python3 "sound design/prototype/measure.py" noise` - then calibrate the Reduction knob so the
 measured broadband reduction equals the number on the knob (the floor-to-achieved table is in
