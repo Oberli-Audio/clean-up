@@ -159,7 +159,7 @@ inline constexpr Help help[] = {
     { humWidth, "Notch width; wider follows unstable mains. Range 0.5 Hz to 10.0 Hz, default 2.0 Hz.", "" },
     { humFreq, "Mains fundamental; Find measures it, tracking follows drift. Range 40.00 Hz to 70.00 Hz, default 50.00 Hz.", "" },
     { clickOn, "Repairs clicks and crackle. Default Off.", "" },
-    { clickThreshold, "Lower catches more clicks, and also drum hits. Range 0 % to 100 %, default 55 %.", "only loud clicks / balanced / everything" },
+    { clickThreshold, "Higher catches more clicks, and also drum hits. Range 0 % to 100 %, default 55 %.", "only loud clicks / balanced / everything" },
     { clickLength, "The longest span repaired as one click. Range 0 ms to 10 ms, default 2 ms.", "" },
     { clickCrackle, "Adds repair of dense tiny clicks. Range 0 % to 100 %, default 0 %.", "" },
     { clickMode, "Clicks for isolated pops, Crackle for dense noise. Options Clicks, Crackle; default Clicks.", "" },

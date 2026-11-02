@@ -5,7 +5,7 @@ humHarmonics,1,int,plain,Harmonics,Harmon,Hum,N,,1,16,8,,N,,16,plain,0,,Y,0,cros
 humWidth,1,float,plain,Width,Width,Hum,N,Hz,0.5,10,2,2,N,,0,hz,1,,Y,20,log,block,,Notch width; wider follows unstable mains,
 humFreq,1,float,plain,Frequency,Freq,Hum,N,Hz,40,70,50,55,N,,0,hz,2,,Y,50,linear,block,,"Mains fundamental; Find measures it, tracking follows drift",
 clickOn,1,bool,plain,Click,Click,Click,N,,0,1,0,,N,,2,bool,0,off|on,Y,0,crossfade,event,,Repairs clicks and crackle,
-clickThreshold,1,float,plain,Threshold,Thresh,Click,Y,%,0,100,55,,N,,0,percent,0,,Y,20,linear,block,only loud clicks / balanced / everything,"Lower catches more clicks, and also drum hits",
+clickThreshold,1,float,plain,Threshold,Thresh,Click,Y,%,0,100,55,,N,,0,percent,0,,Y,20,linear,block,only loud clicks / balanced / everything,"Higher catches more clicks, and also drum hits",
 clickLength,1,float,plain,Length,Length,Click,N,ms,0.2,10,2.5,2.5,N,,0,time,1,,Y,20,log,block,,The longest span repaired as one click,
 clickCrackle,1,float,plain,Crackle,Crackle,Click,N,%,0,100,0,,N,,0,percent,0,,Y,20,linear,block,,Adds repair of dense tiny clicks,
 clickMode,1,choice,plain,Mode,ClkMode,Click,N,,0,1,0,,N,Clicks|Crackle,2,choice,0,,Y,0,crossfade,event,,"Clicks for isolated pops, Crackle for dense noise",
