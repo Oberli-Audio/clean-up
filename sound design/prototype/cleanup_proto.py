@@ -140,8 +140,13 @@ NOISE_MINSTAT_SMOOTH_S = 0.200          # Martin's method tracks the minimum of 
 NOISE_MINSTAT_BIAS_DB = 1.8             # what is left of that bias after the smoothing, measured
                                         # by `measure.py noise --calibrate` on pink noise. A
                                         # property of the window count, not of the material.
-NOISE_ALPHA_AT_0 = 0.50                 # decision-directed smoothing from Smooth %
-NOISE_ALPHA_AT_100 = 0.98
+# Decision-directed a-priori SNR (Ephraim-Malah): xi = a G(l-1)^2 gamma(l-1) + (1-a) max(gamma-1, 0),
+# a = exp(-hop / tau) with tau from Smooth %, log-spaced (rule 12: a time, not a per-frame factor).
+# The sketch's 0.5-0.98 put the default (0.69) where the Wiener cannot reach its own floor in
+# pure noise: measured, 8.6 dB at a floor of -42 dB. A noise-only bin then reaches its floor
+# only when a >= ~0.98, i.e. tau >= ~0.5 s at a 10.7 ms hop (`measure.py noise`).
+NOISE_DD_TAU_AT_0_S = 0.25              # Smooth 0 %: onsets lose 0.30 dB in their first 10 ms
+NOISE_DD_TAU_AT_100_S = 4.0             # Smooth 100 %: 1.08 dB; the default 40 % is 0.76 s
 NOISE_LEARN_S = 1.0                     # Learn captures one second
 NOISE_LEARN_MAX_DBFS = -40.0            # louder than this during Learn is not a noise profile
 
@@ -719,6 +724,7 @@ class NoiseWiener:
                                            / (hop / fs))))
         self.smooth_a = np.float32(math.exp(-(hop / fs) / NOISE_MINSTAT_SMOOTH_S))
         self.bias = np.float32(undb(NOISE_MINSTAT_BIAS_DB) ** 2)
+        self.warm_frames = max(1, int(math.ceil(NOISE_MINSTAT_SMOOTH_S / (hop / fs))))
         self.profile = None
         self.reset()
 
@@ -731,7 +737,9 @@ class NoiseWiener:
         self.lam = np.full(self.bins, np.float32(1.0e-20), dtype=np.float32)
         self.pow_smooth = np.zeros(self.bins, dtype=np.float32)
         self.smooth_primed = False
+        self.warm_count = 0
         self.xi = np.zeros(self.bins, dtype=np.float32)
+        self.gamma_prev = np.zeros(self.bins, dtype=np.float32)
         self.gain = np.ones(self.bins, dtype=np.float32)
         self.learn_left = 0
         self.learn_acc = np.zeros(self.bins, dtype=np.float64)
@@ -754,16 +762,27 @@ class NoiseWiener:
         # fed to a minimum tracker pins the estimate at zero for a whole window: measured, the
         # Adaptive profile read -300 dBFS for the first 1.5 s and reduced nothing, then -63.9
         # dBFS instead of -50 while the zeros were still in the ring (8.1 dB of reduction where
-        # -12 was asked). The tracker therefore starts at the first frame that has any energy,
-        # with the whole ring primed from it.
+        # -12 was asked). The tracker therefore starts at the first frame that has any energy.
+        # It does not prime the ring from that one frame: a single periodogram is exponentially
+        # distributed per bin, so a ring primed from it sat far below the floor until it rolled
+        # over - measured, 2.3 dB of reduction over the first 1.5 s where 11.8 was reached after
+        # it. For NOISE_MINSTAT_SMOOTH_S the estimate is the running mean of the frames instead
+        # (unbiased, its variance falling as 1/k), and the ring is primed from that mean, divided
+        # by the bias so the estimate does not jump at the hand-over.
         if not self.smooth_primed:
-            if not np.any(power > 0.0):
+            if self.warm_count == 0 and not np.any(power > 0.0):
                 return
-            self.pow_smooth = power.copy()
-            self.ring[:] = self.pow_smooth
-            self.sub_min = self.pow_smooth.copy()
+            self.warm_count += 1
+            self.pow_smooth = (self.pow_smooth + (power - self.pow_smooth)
+                               / np.float32(self.warm_count)).astype(np.float32)
+            self.lam = np.minimum(self.pow_smooth, np.float32(1.0e29)).astype(np.float32)
+            if self.warm_count < self.warm_frames:
+                return
+            self.ring[:] = self.pow_smooth / self.bias
+            self.sub_min = (self.pow_smooth / self.bias).astype(np.float32)
             self.sub_count = 0
             self.smooth_primed = True
+            return
         else:
             self.pow_smooth = (self.smooth_a * self.pow_smooth
                                + (np.float32(1.0) - self.smooth_a) * power).astype(np.float32)
@@ -790,6 +809,7 @@ class NoiseWiener:
         self._minstat(power)                       # always tracking, so Adaptive is instant
         if not p.noiseOn:
             self.gain = np.ones(self.bins, dtype=np.float32)
+            self.gamma_prev = np.zeros(self.bins, dtype=np.float32)
             return self.gain
         if p.noiseMode == PROFILE_LEARNED and self.profile is not None:
             lam = self.profile.copy()
@@ -804,12 +824,17 @@ class NoiseWiener:
             scale = min((want / max(est, 1.0e-12)) ** 2, 1.0e12)
             lam = (lam * np.float32(scale)).astype(np.float32)
         g_min = np.float32(undb(p.noiseReduction))
-        alpha = np.float32(NOISE_ALPHA_AT_0 + (p.noiseSmooth / 100.0)
-                           * (NOISE_ALPHA_AT_100 - NOISE_ALPHA_AT_0))
+        tau = NOISE_DD_TAU_AT_0_S * (NOISE_DD_TAU_AT_100_S / NOISE_DD_TAU_AT_0_S) ** (
+            p.noiseSmooth / 100.0)
+        alpha = np.float32(math.exp(-(self.hop / self.fs) / tau))
         gamma = (power / np.maximum(lam, np.float32(1.0e-30))).astype(np.float32)
-        xi = (alpha * (self.gain * self.gain * gamma)
+        # the previous frame's clean estimate over the noise, G(l-1)^2 gamma(l-1): the first
+        # version used the *current* gamma here, which makes the a-priori SNR partly
+        # a-posteriori and lets every high periodogram bin through
+        xi = (alpha * (self.gain * self.gain * self.gamma_prev)
               + (np.float32(1.0) - alpha) * np.maximum(gamma - np.float32(1.0),
                                                        np.float32(0.0))).astype(np.float32)
+        self.gamma_prev = gamma
         self.xi = xi
         g = (xi / (xi + np.float32(1.0))).astype(np.float32)
         self.gain = np.maximum(g, g_min).astype(np.float32)
@@ -1253,6 +1278,25 @@ def selftest():
     yi, _ = render(x[:24000], p0, fs=48000.0, block=512)
     d = float(db(np.abs(yo + yr - yi).max()))
     check("Output + Removed == Input", d < -120.0, "%.1f dBFS" % d)
+
+    # 11. Noise defects found at G3 (docs/failures.md), on noise alone at -50 dBFS
+    wn = rng.standard_normal(int(4.0 * 48000)) * undb(-50.0)
+    xn = np.stack([wn, wn], axis=1)
+
+    def reduction(p, a_s, b_s):
+        y, cu = render(xn, p, fs=48000.0, block=512)
+        y = y[cu.latency:]
+        a, b = int(a_s * 48000), int(b_s * 48000)
+        return float(db(np.sqrt(np.mean(xn[a:b] ** 2))) - db(np.sqrt(np.mean(y[a:b] ** 2))))
+
+    # the minimum tracker primed from one periodogram sat below the floor for its whole window
+    r0 = reduction(Params(noiseOn=True, noiseReduction=-12.0, noiseSmooth=40.0), 0.5, 1.5)
+    check("noise reduces from the start (minimum-statistics warm-up)", r0 >= 11.0,
+          "%.2f dB over 0.5-1.5 s at Reduction -12 dB" % r0)
+    # a decision-directed gain whose a-priori SNR follows the periodogram stops short of its floor
+    r1 = reduction(Params(noiseOn=True, noiseReduction=-18.0, noiseSmooth=40.0), 2.0, 4.0)
+    check("noise reaches its gain floor (decision-directed gain law)", r1 >= 17.0,
+          "%.2f dB at Reduction -18 dB, Smooth 40 %%" % r1)
 
     print("\n" + ("selftest: all good" if ok else "selftest: FAILURES above"))
     return 0 if ok else 1

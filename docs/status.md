@@ -1,9 +1,18 @@
-# Status - Clean Up 0.1.0 (2026-11-01)
-Tier P, track E, at gate G3 (paused by the owner mid-G3). Recipe D.8.1.
+# Status - Clean Up 0.1.0 (2026-11-02)
+Tier P, track E, at gate G3 (open: Noise passes since 2026-11-02; reverb, all-four and the
+reference renders next). Recipe D.8.1.
 
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
 
+- 2026-11-02 **`noiseSmooth` is a time constant of 0.25-4 s, not the sketch's alpha 0.5-0.98.**
+  Measured: at the sketch's range the default (alpha 0.69) leaves the Wiener short of its own
+  floor - 7.3 dB where -12 was asked, 8.6 dB at most however deep the floor. From 0.25 s up a
+  noise-only bin reaches its floor; the default 40 % is now 0.76 s and delivers 11.6 dB at
+  -12, musical noise -67.0 dBFS. What longer Smooth costs is onsets: the first 10 ms of a
+  phrase lose 0.30 dB at Smooth 0 %, 0.56 dB at 40 %, 1.08 dB at 100 %. The tooltip's
+  "at the cost of some noise between words" no longer describes the trade; say if it should
+  read "at the cost of softer word onsets" and I change the CSV line.
 - 2026-11-01 **Latency is 54.7 ms at 48 kHz, not the brief's ~43 ms.** The brief's
   `latency_budget` reads "2048-frame STFT plus click lookahead (about 43 ms)", but a 2048 frame
   at 4x overlap costs `frame - hop` = 1536 samples on its own, and the output FIFO needs one hop
@@ -20,19 +29,6 @@ Newest first, one line each. Everything else below is unblocked and in progress.
   clean vocal**. At 40-6 (default 55 % = 21 sigma) that is 3, with 97 of 100 clicks still
   caught and 0 false repairs on a snare. The knob's direction is unchanged.
 - 2026-11-01 **EX-1 below: 97 of 100 clicks caught, not all 100.** The brief asks for all.
-- 2026-11-01 **The Noise module's Reduction knob does not yet deliver its number** (see the
-  G3 table): asking -12 dB gives 7.3 dB of measured broadband reduction, and the module
-  saturates at 8.6 dB however deep the floor is set. That is the periodogram's heavy tail, not
-  a bug, and the fix in hand is to calibrate the knob so it means what the CSV says it means
-  ("how much of the noise floor is taken away"). **This is where the work was paused.**
-
-- 2026-11-01 **Shared code `Source/oberli/` is not in the template yet.** LookAndFeel, Strip
-  frame, meters, Loudness, **Analysis/FFT**, References, RenderSafety are built in
-  Oberli-Audio/bob-skills as template `Source/oberli/`. The editor stays the template stub
-  until they land; the always-on **input sonogram** of the Removed display needs the shared
-  Analysis/FFT, so only the removed-energy half (band energies of in minus out, inside the
-  STFT engine) is built on the DSP side. Refresh `Source/oberli/` from plugin-template and
-  wire it in when it exists.
 - 2026-11-01 **`clickThreshold` reads backwards in two places.** The sketch's mapping (4.3,
   "0-100 % to 12-3 sigma") and the CSV's `meaning` ("only loud clicks / balanced /
   everything") say higher % catches more; `brief.md` `core_controls` ("how unusual a sample
@@ -84,10 +80,11 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 | 0 false repairs on a snare at Threshold 55 % | **0** | pass |
 | per-click repair residual | median -31.7 dBFS, improvement 18.8 dB, worst -10.3 | pass (median bar) |
 | a clean vocal is left alone | 3 repairs, residual -42.3 dBFS | pass |
-| -50 dBFS pink reduced 12 +/- 1 dB in the gaps | **7.3 dB (module ceiling 8.6 dB)** | **fail, in hand** |
-| no musical noise above -60 dBFS at Smooth 40 % | -57.7 dBFS | fail, follows the row above |
+| -50 dBFS pink reduced 12 +/- 1 dB in the gaps | 11.56 dB (2026-11-02; was 7.3) | pass |
+| no musical noise above -60 dBFS at Smooth 40 % | -67.0 dBFS (2026-11-02; was -57.7) | pass |
+| Smooth buys less artefact (0 % -> 40 %) | 1.2 dB | pass |
 | Reduction 0 dB passes through | -143.9 dBFS | pass |
-| Learn captures a profile | yes, gaps reach -58.3 dBFS | pass |
+| Learn captures a profile | yes, gaps reach -61.6 dBFS | pass |
 | 1.2 s RT60 reads <= 0.6 s at Amount 50 % | not yet run | - |
 | onsets within 1 dB at Attacks 60 % | not yet run | - |
 | Estimate measures the tail | not yet run | - |
@@ -115,20 +112,25 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 ## Handoff
 Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
 Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - null, latency, hum,
-click done; **Noise's Reduction calibration is the open point**; reverb, all-four and the
-reference renders not yet run 4. [ ] G4 C++ port 5. [ ] harness hooks and tests 6. [ ] G5 null
-7. [ ] G6 validate 8. [ ] G7 bank and documents.
-Working tree: clean. Build: red on purpose (the template processor still references
-`Params::outGain` and `Params::mix`, which the real `parameters.csv` does not have; the
-processor is rewritten at G4). Tests: the prototype selftest is green (17 checks); the CTest
-suite is not registered yet (no harness binary).
+click and noise done; reverb, all-four and the reference renders not yet run 4. [ ] G4 C++
+port 5. [ ] harness hooks and tests 6. [ ] G5 null 7. [ ] G6 validate 8. [ ] G7 bank and
+documents.
+Machine: from 2026-11-02 Björn's Mac (Claude Code in VS Code), on `main`. `Source/oberli/` is
+refreshed from plugin-template 0e7d4f4 (`refresh_oberli.py --accent "#33B679"`); the editor is
+wired to it at G4, with plugin-ui-bob.
+Build: `cmake --preset release && cmake --build --preset release` is red on purpose, only in
+`Source/PluginProcessor.cpp` (the template processor still references `Params::outGain` and
+`Params::mix`, which the real `parameters.csv` does not have; the processor is rewritten at G4).
+Tests: the prototype selftest is green, 19 checks
+(`python3 "sound design/prototype/cleanup_proto.py" --selftest`); `ctest --preset fast` runs the
+four shared tests (oberli_build_tests, oberli_loudness, oberli_shared, oberli_copy), all pass;
+the product suite registers once the harness builds. On this Mac CMake finds Homebrew's
+python3.12 first, which has no numpy: configure with
+`cmake --preset release -DPython3_EXECUTABLE=/usr/bin/python3` (the build cache keeps it).
 Open questions for the owner: the Waiting for Björn section above.
-To take the work up in the local session (Claude Code in Visual Studio / VS Code): the
-self-contained prompt is the second section of `docs/kickoff.md`.
 Next command, to resume exactly where this stopped:
-`python3 "sound design/prototype/measure.py" noise` - then calibrate the Reduction knob so the
-measured broadband reduction equals the number on the knob (the floor-to-achieved table is in
-Decisions below), then `reverb`, `all-four`, `renders`.
+`python3 "sound design/prototype/measure.py" reverb`, then `all-four`, then `renders` - the
+renders are the listening checkpoint: stop there and let Björn hear them.
 
 ## Decisions
 
@@ -166,7 +168,8 @@ transient smearing) and rule 6 (modulated filters TPT/ZDF), rule 7 (latency), ru
   (`measure.py click`).
 - **Noise - decision-directed Wiener gain on the shared STFT, minimum statistics for the
   Adaptive profile.** a-posteriori SNR from the bin power over the noise estimate, a-priori
-  SNR smoothed with alpha from Smooth (0.5-0.98), gain floored at Reduction so the floor is
+  SNR smoothed with alpha from Smooth (0.5-0.98; a time constant of 0.25-4 s since
+  2026-11-02, see below), gain floored at Reduction so the floor is
   reduced and not removed. Trade-off against a spectral gate: the gain floor plus the
   a-priori smoothing is the only thing that keeps musical noise down, and it is what the
   brief measures. Rejected if: -50 dBFS pink noise is not reduced by 12 +/- 1 dB in the gaps,
@@ -248,7 +251,7 @@ commented at its definition in `sound design/prototype/cleanup_proto.py`.
   the estimate at zero for the first 1.5 s, so the tracker starts at the first frame with any
   energy, with the whole ring primed from it.
 
-### 2026-11-01 open: the Noise module's Reduction knob (where work paused)
+### 2026-11-01 the Noise module's Reduction knob (resolved 2026-11-02, next section)
 `noiseReduction` is a **per-bin gain floor**, but the brief measures the **broadband** drop of
 the floor in the gaps, and a decision-directed Wiener deliberately keeps bins that look like
 signal. The periodogram of stationary noise is exponential, its tail is heavy, and the bins
@@ -271,3 +274,47 @@ phrase), so the ceiling is the gain law, not the estimator. The knob's own meani
 `parameters.csv` is "How much of the noise floor is taken away", so the fix in hand is to make
 the knob deliver that number - the floor becomes a function of Reduction calibrated against
 this table - rather than to re-label the knob as a per-bin floor. **Not yet implemented.**
+
+### 2026-11-02 G3, Noise: two defects, not a calibration
+The table above was read as the gain law's ceiling and the plan was to calibrate the knob
+against it. Measuring before calibrating showed two defects instead, and with both fixed the
+knob delivers its number without a calibration table. Each is a row in `docs/failures.md` and a
+selftest check that fails on the commit before.
+
+- **The minimum tracker started from one periodogram.** On noise alone the module reduced
+  2.3 dB over its first 1.5 s and 11.8 dB after it; the brief's first gap (1.14-1.48 s) sits
+  in that window. A single frame is exponentially distributed per bin, and the ring primed from
+  it held the minimum far below the floor until it rolled over. Now the estimate is the running
+  mean of the frames for `NOISE_MINSTAT_SMOOTH_S` (200 ms) and the ring is primed from that:
+  10.7 dB over the first 0.5 s, 11.8 dB over 1.0-1.5 s.
+- **The decision-directed gain stopped short of its floor.** Two parts. The a-priori SNR used
+  the *current* gamma with the previous gain instead of Ephraim-Malah's `G(l-1)^2 gamma(l-1)`,
+  which makes it partly a-posteriori (measured, it alone changes little: 7.2 against 7.3 dB).
+  And the sketch's alpha range put the default at 0.69, where a Wiener cannot reach a
+  -12 dB floor in pure noise even with an exact noise estimate (simulated: 9.3 dB, 10.5 dB at
+  a -40 floor; 12.0 dB at alpha 0.98). The smoothing is now a time constant (rule 12),
+  `alpha = exp(-hop / tau)`, tau log-spaced from 0.25 s (Smooth 0 %) to 4 s (100 %). Sweep on
+  the vocal + pink, Reduction -12 (`tau_sweep`, seed 4):
+
+  | tau | -6 | -12 | -18 | -24 | -30 | musical noise at -12 | onset, first 10 ms |
+  |---|---|---|---|---|---|---|---|
+  | 0.03 s | 5.5 | 8.7 | 9.9 | 10.3 | 10.4 | -60.5 dBFS | -0.06 dB |
+  | 0.10 s | 5.7 | 10.5 | 13.2 | 14.1 | 14.4 | -63.6 | -0.16 |
+  | 0.25 s | 5.8 | 11.2 | 15.7 | 18.0 | 18.7 | -65.8 | -0.30 |
+  | 0.50 s | 5.8 | 11.5 | 17.1 | 21.4 | 23.5 | -66.8 | -0.46 |
+  | 1.00 s | 5.8 | 11.6 | 17.8 | 23.5 | 28.2 | -67.2 | -0.64 |
+  | 4.00 s | 5.8 | 11.7 | 18.0 | 24.0 | 30.0 | -67.5 | -1.08 |
+
+  The knob as shipped, measured in the gaps (asked -> delivered, dB):
+
+  | Smooth | -3 | -6 | -12 | -18 | -24 | -30 |
+  |---|---|---|---|---|---|---|
+  | 0 % (0.25 s) | 2.95 | 5.77 | 11.21 | 15.71 | 18.02 | 18.73 |
+  | 40 % (0.76 s) | 2.95 | 5.79 | 11.56 | 17.55 | 22.99 | 26.66 |
+  | 100 % (4 s) | 2.95 | 5.80 | 11.74 | 17.99 | 24.00 | 29.99 |
+
+  At the default the knob is within 1 dB of its number to -24 dB; deeper settings need more
+  Smooth, which is the trade the knob is for. Rejected if: `measure.py noise` misses 12 +/- 1 dB
+  or musical noise rises above -60 dBFS at Smooth 40 %, or the first 10 ms of a phrase lose
+  more than 1 dB at Smooth 40 %. `NOISE_MINSTAT_BIAS_DB` is unchanged (1.8 dB, re-measured by
+  `measure.py noise --calibrate`).
