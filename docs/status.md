@@ -1,10 +1,31 @@
-# Status - Clean Up 0.1.0 (2026-11-02)
-Tier P, track E, at gate G3 (open: Noise passes since 2026-11-02; reverb, all-four and the
-reference renders next). Recipe D.8.1.
+# Status - Clean Up 0.1.0 (2026-11-03)
+Tier P, track E, at gate G3 (open: every row measured, 36 of 38 pass; Reverb's T60 needs a
+design decision, below; the reference renders are waiting to be heard). Recipe D.8.1.
 
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
 
+- 2026-11-03 **Listening checkpoint: the reference renders are written.** `python3 "sound
+  design/prototype/measure.py" renders` -> `sound design/renders/` (gitignored, to the bit from
+  the seeds). A/B `<module>-in.wav` against `-out.wav`, and listen to `-removed.wav` alone:
+  hum on the bass line, clicks on the vocal, pink noise on the vocal, the 1.2 s room on the
+  vocal. The reverb pair is the one the decision below is about.
+- 2026-11-03 **Reverb does not shorten the room; the design needs your call.** At Amount 50 %
+  a 1.2 s room still reads **1.26 s** (target <= 0.6). The G1 decision predicted a memoryless
+  gain could not change a decay *rate*; it also cannot steepen the fit: in a free exponential
+  tail the late estimate equals the current power every frame, so `1 - Amount * late /
+  current` is a constant (-3 dB at 50 %) and the tail is lowered, not shortened. Plain
+  subtraction takes only 5.5 dB off a pure tail even at 100 %, because a noise-like tail
+  scatters per bin (Noise's heavy tail again). Tried and reverted: a decision-directed Wiener
+  against the late power (up to 20 dB off the tail at 100 %, but Lebart counts a held note's
+  own power 50 ms back as reverb, so a held vowel would sit ~14 dB down - a pencil estimate,
+  not measured) and a second "shorter room" late model (right in principle - the gain falls
+  through the tail - but fed by the scatter it never pulled away). Options: **(a)** carry on
+  towards real decay shortening: the shorter-room model driven by a robust direct-sound
+  estimate, inside structural decision 4 but a G1 re-open, held notes the risk to measure -
+  my recommendation; **(b)** Amount lowers the tail instead of shortening it (a drier room,
+  not a smaller one) and the brief's target becomes a late-energy drop - cheap, and audibly a
+  different effect. Listen to `reverb-out.wav` (that is (b) at its mildest) before you choose.
 - 2026-11-02 **`noiseSmooth` is a time constant of 0.25-4 s, not the sketch's alpha 0.5-0.98.**
   Measured: at the sketch's range the default (alpha 0.69) leaves the Wiener short of its own
   floor - 7.3 dB where -12 was asked, 8.6 dB at most however deep the floor. From 0.25 s up a
@@ -55,7 +76,7 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 | G0 | closed 2026-11-01 | `docs/brief.md` owner-confirmed, from `docs/sketch.md` |
 | G1 | closed 2026-11-01 | see Decisions: four families, four departures, each with the measurement that rejects it |
 | G2 | closed 2026-11-01 | `python3 "sound design/prototype/cleanup_proto.py" --selftest` -> 17 checks, all green (Burg against a known AR(2), the bell against its own biquad, all-off bit-exact, WOLA passthrough, latency = frame + lookahead, bypass a delayed wire, two runs bit-identical, block size irrelevant, finite at all six rates, Output + Removed = Input) |
-| G3 | **open, paused** | per target below; `python3 "sound design/prototype/measure.py" <what>` |
+| G3 | **open** | per target below; `python3 "sound design/prototype/measure.py" --all` -> 38 measurements, 2 fail (2026-11-03) |
 | G4 | - | |
 | G5 | - | |
 | G6 | - | |
@@ -77,25 +98,29 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 | Depth 0 dB bypasses the comb | -300.0 dBFS | pass |
 | Find measures the mains frequency | 50.00 Hz | pass |
 | 100 clicks 0.5-3 ms all caught at Threshold 55 % | **97 of 100** | EX-1 |
+| (2026-11-03) per-click repair: median residual / improvement | -35.5 dBFS / 23.6 dB (was -31.7 / 18.8) | pass |
 | 0 false repairs on a snare at Threshold 55 % | **0** | pass |
-| per-click repair residual | median -31.7 dBFS, improvement 18.8 dB, worst -10.3 | pass (median bar) |
 | a clean vocal is left alone | 3 repairs, residual -42.3 dBFS | pass |
 | -50 dBFS pink reduced 12 +/- 1 dB in the gaps | 11.56 dB (2026-11-02; was 7.3) | pass |
 | no musical noise above -60 dBFS at Smooth 40 % | -67.0 dBFS (2026-11-02; was -57.7) | pass |
 | Smooth buys less artefact (0 % -> 40 %) | 1.2 dB | pass |
 | Reduction 0 dB passes through | -143.9 dBFS | pass |
 | Learn captures a profile | yes, gaps reach -61.6 dBFS | pass |
-| 1.2 s RT60 reads <= 0.6 s at Amount 50 % | not yet run | - |
-| onsets within 1 dB at Attacks 60 % | not yet run | - |
-| Estimate measures the tail | not yet run | - |
-| all four modules on: health, max_click_db, Removed data | not yet run | - |
+| 1.2 s RT60 reads <= 0.6 s at Amount 50 % | **1.26 s** (input 1.30 s) | **fail, Waiting for Björn** |
+| onsets within 1 dB at Attacks 60 % | 0.65 dB | pass |
+| Amount 0 % passes through | -142.3 dBFS | pass |
+| Estimate measures the tail | 1.60 s (1.2 +/- 0.4) | pass |
+| all four: finite, no clip | -7.5 dBFS peak | pass |
+| all four adds no step outside the clicks (vs the clean room) | -3.4 dB | pass |
+| all four: clicks caught in a room with hum and noise | **28 of 30** (>= 29 asked, as EX-1) | **fail, open** |
+| Removed display has data / is empty when off | 33.7 dB / 0 | pass |
 
 ## Listening debt
-- 2026-11-01: nothing heard yet. `python3 "sound design/prototype/measure.py" renders` writes
-  `<module>-in.wav`, `-out.wav` and `-removed.wav` for all four modules into
-  `sound design/renders/` (gitignored, reproducible to the bit from the seed). The pairs to A/B
-  at the listening checkpoint: hum on the bass line, clicks on the vocal, pink noise on the
-  vocal, the 1.2 s room on the vocal. **Not yet rendered - paused before it.**
+- 2026-11-03: nothing heard yet. The renders are written (`measure.py renders` -> `sound
+  design/renders/`, gitignored, reproducible to the bit from the seeds): hum on the bass line,
+  clicks on the vocal, pink noise on the vocal, the 1.2 s room on the vocal, each as `-in`,
+  `-out` and `-removed`. Noise and Click changed on 2026-11-02/03, so these are the first
+  renders of what G4 will port.
 
 ## Open exceptions
 - EX-1 2026-11-01: brief target "100 synthetic 0.5-3 ms clicks all caught"; measured **97 of
@@ -111,17 +136,17 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 
 ## Handoff
 Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
-Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - null, latency, hum,
-click and noise done; reverb, all-four and the reference renders not yet run 4. [ ] G4 C++
-port 5. [ ] harness hooks and tests 6. [ ] G5 null 7. [ ] G6 validate 8. [ ] G7 bank and
-documents.
+Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - every row run
+(`measure.py --all`: 38 measurements, 2 fail); open: Reverb's T60 (Waiting for Björn), the
+all-four recall (28 of 30), the listening checkpoint 4. [ ] G4 C++ port 5. [ ] harness hooks
+and tests 6. [ ] G5 null 7. [ ] G6 validate 8. [ ] G7 bank and documents.
 Machine: from 2026-11-02 Björn's Mac (Claude Code in VS Code), on `main`. `Source/oberli/` is
 refreshed from plugin-template 0e7d4f4 (`refresh_oberli.py --accent "#33B679"`); the editor is
 wired to it at G4, with plugin-ui-bob.
 Build: `cmake --preset release && cmake --build --preset release` is red on purpose, only in
 `Source/PluginProcessor.cpp` (the template processor still references `Params::outGain` and
 `Params::mix`, which the real `parameters.csv` does not have; the processor is rewritten at G4).
-Tests: the prototype selftest is green, 19 checks
+Tests: the prototype selftest is green, 20 checks
 (`python3 "sound design/prototype/cleanup_proto.py" --selftest`); `ctest --preset fast` runs the
 four shared tests (oberli_build_tests, oberli_loudness, oberli_shared, oberli_copy), all pass;
 the product suite registers once the harness builds. On this Mac CMake finds Homebrew's
@@ -129,8 +154,9 @@ python3.12 first, which has no numpy: configure with
 `cmake --preset release -DPython3_EXECUTABLE=/usr/bin/python3` (the build cache keeps it).
 Open questions for the owner: the Waiting for Björn section above.
 Next command, to resume exactly where this stopped:
-`python3 "sound design/prototype/measure.py" reverb`, then `all-four`, then `renders` - the
-renders are the listening checkpoint: stop there and let Björn hear them.
+the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: why the
+all-four click at 5.13 s is never caught (`measure.py all-four`; a lead in Decisions,
+2026-11-03), then G4, the C++ port of Hum, Click and Noise, whose G3 rows pass.
 
 ## Decisions
 
@@ -318,3 +344,33 @@ selftest check that fails on the commit before.
   or musical noise rises above -60 dBFS at Smooth 40 %, or the first 10 ms of a phrase lose
   more than 1 dB at Smooth 40 %. `NOISE_MINSTAT_BIAS_DB` is unchanged (1.8 dB, re-measured by
   `measure.py noise --calibrate`).
+
+### 2026-11-03 G3, Click: repairs covered only the click's core
+The all-four run showed it: in a room with hum and noise, clicks were caught but repaired
+from 13-46 samples after their start to 17-45 before their end, leaving -13.8 dBFS where the
+input had -14.9. The detection threshold (21 sigma at the default 55 %) finds a click's core
+only; its flanks were left in. Now a detected run grows outwards to the furthest sample whose
+prediction error is above `CLICK_EXTEND_SIGMA` (6 sigma), up to `CLICK_EXTEND_MAX_S` (1 ms) a
+side, crossing dips of up to `CLICK_EXTEND_GAP_S` (0.25 ms): a random-signed burst's error dips
+below any threshold every few samples, and a sample-by-sample walk stopped at the first dip.
+The click battery: 97 of 100 still caught (EX-1 unchanged), median residual -35.5 dBFS (was
+-31.7), median improvement 23.6 dB (was 18.8), 0 snare repairs, 3 on the clean vocal as before.
+Regression: selftest `click repair covers the whole click (hysteresis)` (-16.5 dBFS on the
+commit before, -38.5 after); `docs/failures.md`.
+
+Open lead, not changed: the level-step test reads its 1.333 ms context windows against a 12 dB
+limit, and 1.333 ms is shorter than a sung pitch period (3.7-5.5 ms here), so its RMS swings
+with where a window falls between glottal pulses (-31.0 against -18.6 dBFS around the click at
+5.44 s in the all-four run). 5 ms windows caught that click and missed one straddling the first
+phrase onset instead - the same count, 28 of 30 - so the change is not in; it comes back with a
+test that shows it.
+
+### 2026-11-03 G3, the all-four measurement was measuring the wrong thing
+Two measurement defects, fixed in `measure.py all-four`, not in the plugin:
+- **The flaws were in the room.** Hum, pink and the clicks were added before the room
+  convolution, so each click carried a 1 s tail of its own and the level-step test (rightly)
+  read it as a transient. Hum, noise and clicks are electrical; they now arrive after the room.
+- **presetlint's absolute -6 dB `max_click_db` cannot be met by this material**: the clean
+  vocal's sibilants alone read -3.8 dB. The health row now asks what it is for - whether the
+  chain adds a step - outside the injected clicks (+/- 2 ms) and against the clean vocal in the
+  same room (+1 dB allowed). Whether the clicks went is a separate row at EX-1's 95 %.

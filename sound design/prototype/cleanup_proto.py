@@ -97,6 +97,16 @@ CLICK_SIGMA_AT_100 = 6.0                # was measured far too sensitive: the gl
                                         # repaired, 3 on a snare (and the step test below takes
                                         # those).
 CLICK_MERGE_S = 0.001                   # two detections closer than this are one click
+CLICK_EXTEND_SIGMA = 6.0                # hysteresis: a detected run grows outwards while the
+                                        # prediction error stays above this many sigma. The
+                                        # detection threshold (21 sigma at 55 %) finds only a
+                                        # click's core: measured in a room with hum and noise, the
+                                        # repairs started 13-46 samples into the click and ended
+                                        # 17-45 before its end, and left a -13.8 dBFS residual
+CLICK_EXTEND_MAX_S = 0.001              # at most this much growth on each side
+CLICK_EXTEND_GAP_S = 0.00025            # the growth crosses dips this short: a burst's error
+                                        # dips below any threshold every few samples, and a
+                                        # sample-by-sample walk stopped at the first one
 CLICK_RUN_SLACK_ORDER = 1.0             # a click of L samples keeps the prediction error high
                                         # for about L + order samples, because the model's own
                                         # history is corrupted that long. A run longer than
@@ -543,6 +553,8 @@ class ClickRepair:
         self.context = max(CLICK_AR_ORDER, int(round(CLICK_CONTEXT_S * fs)))
         self.xfade = max(1, int(round(CLICK_XFADE_S * fs)))
         self.merge = max(1, int(round(CLICK_MERGE_S * fs)))
+        self.extend_max = max(1, int(round(CLICK_EXTEND_MAX_S * fs)))
+        self.extend_gap = max(1, int(round(CLICK_EXTEND_GAP_S * fs)))
         self.lookahead = max(1, int(round(CLICK_LOOKAHEAD_S * fs)))
         self.scan_main = RunScanner()
         self.scan_crackle = RunScanner()
@@ -651,10 +663,37 @@ class ClickRepair:
 
         repair_pred = [None]                               # fitted lazily, at most once a hop
 
+        thr_ext = max(CLICK_EXTEND_SIGMA * robust_sigma(e[:off + seg_len]),
+                      undb(CLICK_ABS_FLOOR_DBFS))
+        lo_lim = fit_from + order                            # e's first `order` have no history
+        # the repair needs its own context right of the span, or _repair skips the click
+        hi_lim = seg_start + seg_len + self.lookahead - self.repair_order - self.xfade - 1
+
         def do_repair(start, length, lost):
             if lost or length > reject_above:
                 return
             length = int(min(length, max_span))
+            # hysteresis: grow the run outwards to the furthest sample above thr_ext, crossing
+            # dips of up to extend_gap samples
+            new_start, gap = start, 0
+            for k in range(1, self.extend_max + 1):
+                i = start - k
+                if i <= lo_lim or gap > self.extend_gap:
+                    break
+                if abs(e[i - fit_from]) > thr_ext:
+                    new_start, gap = i, 0
+                else:
+                    gap += 1
+            end, new_end, gap = start + length, start + length, 0
+            for k in range(self.extend_max):
+                i = end + k
+                if i >= hi_lim or gap > self.extend_gap:
+                    break
+                if abs(e[i - fit_from]) > thr_ext:
+                    new_end, gap = i + 1, 0
+                else:
+                    gap += 1
+            start, length = new_start, new_end - new_start
             if self._is_level_step(mono, start, length):
                 return
             if repair_pred[0] is None:
@@ -1297,6 +1336,24 @@ def selftest():
     r1 = reduction(Params(noiseOn=True, noiseReduction=-18.0, noiseSmooth=40.0), 2.0, 4.0)
     check("noise reaches its gain floor (decision-directed gain law)", r1 >= 17.0,
           "%.2f dB at Reduction -18 dB, Smooth 40 %%" % r1)
+
+    # 12. Click defect found at G3 (docs/failures.md): the repair covered only a click's core.
+    # A tone in noise at a level where 21 sigma (Threshold 55 %) sits inside a 0.35 burst, so
+    # the burst's Hann flanks are under the detection threshold.
+    t = np.arange(48000) / 48000.0
+    tone = 0.3 * np.sin(2 * math.pi * 220.0 * t) + 0.1 * np.sin(2 * math.pi * 660.0 * t)
+    tone = tone + rng.standard_normal(t.size) * undb(-38.0)
+    xc = np.stack([tone, tone], axis=1)
+    c0, cl = 24000, 86                                     # 1.8 ms
+    burst = rng.choice([-1.0, 1.0], size=cl) * 0.35 * np.hanning(cl)
+    xc_click = xc.copy()
+    xc_click[c0:c0 + cl] += burst[:, None]
+    yc, cuc = render(xc_click, Params(clickOn=True), fs=48000.0, block=512)
+    yc = yc[cuc.latency:]
+    sl = slice(c0 - 16, c0 + cl + 16)
+    resid = float(db(np.sqrt(np.mean((yc[sl] - xc[sl]) ** 2))))
+    check("click repair covers the whole click (hysteresis)", resid <= -25.0,
+          "residual %.1f dBFS over a 1.8 ms burst at 0.35" % resid)
 
     print("\n" + ("selftest: all good" if ok else "selftest: FAILURES above"))
     return 0 if ok else 1

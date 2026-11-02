@@ -435,19 +435,43 @@ def m_reverb():
 def m_all_four():
     seconds = 6.0
     clean = M.vocal(FS, seconds)
-    x, _ = M.add_hum(clean, FS, f0=50.0, harmonics=8, dbfs=-45.0)
-    x, _ = M.add_pink(x, FS, dbfs=-55.0, seed=4)
-    x, _ = M.add_clicks(x, FS, count=30, min_ms=0.5, max_ms=2.0, amp=0.35, seed=12)
+    # the room is acoustic, the other three flaws are electrical: they arrive after the room.
+    # The first version convolved the clicks with the room too, so each click carried its own
+    # 1 s tail and the level-step test (rightly) read it as a transient.
     ir = M.reverb_ir(FS, rt60=1.0, drr_db=3.0, seed=7)
-    x = M.convolve_room(x, ir)
+    ref = M.convolve_room(clean, ir)
+    x, _ = M.add_hum(ref, FS, f0=50.0, harmonics=8, dbfs=-45.0)
+    x, _ = M.add_pink(x, FS, dbfs=-55.0, seed=4)
+    x, spans = M.add_clicks(x, FS, count=30, min_ms=0.5, max_ms=2.0, amp=0.35, seed=12)
     p = P.Params(humOn=True, clickOn=True, noiseOn=True, reverbOn=True)
     y, cu = P.render(x, p, fs=FS, block=BLOCK)
     report("all four: finite, no clip", float(P.db(np.abs(y).max())), "dBFS", "< 0 and finite",
            bool(np.isfinite(y).all()) and np.abs(y).max() < 1.0,
-           'measure.py all-four  (hum -45, pink -55, 30 clicks, 1.0 s room)')
-    mc = K.max_click_db(y, FS)
-    report("all four: max_click_db", float(mc), "dB", "<= -6 (presetlint's limit)", mc <= -6.0,
-           'measure.py all-four')
+           'measure.py all-four  (room 1.0 s, then hum -45, pink -55, 30 clicks)')
+    # Health: does the chain add a step? Judged outside the injected clicks (+/- 2 ms) and
+    # against the clean vocal in the same room, because the vocal's sibilants alone read
+    # -3.8 dB on max_click_db: presetlint's absolute -6 dB cannot tell a click from a
+    # consonant here. Whether the injected clicks went is the click battery's question (EX-1).
+    out = shift(y, cu.latency)
+    n = out.shape[0]
+    keep = np.ones(n, dtype=bool)
+    pad = int(0.002 * FS)
+    for s0, ln in spans:
+        keep[max(0, s0 - pad):min(n, s0 + ln + pad)] = False
+    step = np.abs(np.diff(out, axis=0)).max(axis=1)[keep[1:]]
+    step_ref = np.abs(np.diff(ref[:n], axis=0)).max(axis=1)[keep[1:]]
+    mc = float(P.db(step.max() / np.abs(out).max()))
+    mc_ref = float(P.db(step_ref.max() / np.abs(ref[:n]).max()))
+    report("all four adds no step (outside the clicks)", mc - mc_ref, "dB",
+           "<= +1 vs the clean room", mc - mc_ref <= 1.0, 'measure.py all-four',
+           "max_click_db %.2f, clean room %.2f dB; the contract's whole-file value %.2f"
+           % (mc, mc_ref, K.max_click_db(y, FS)))
+    log = cu.click.log
+    caught = sum(any(d < s0 + ln and d + dl > s0 for d, dl in log) for s0, ln in spans)
+    report("all four: clicks caught (of %d)" % len(spans), caught, "clicks",
+           ">= %d (95 %%, as EX-1)" % int(math.ceil(0.95 * len(spans))),
+           caught >= math.ceil(0.95 * len(spans)), 'measure.py all-four',
+           "in a 1.0 s room with hum and noise, amplitude 0.35")
     removed = cu.removed_bands.sum()
     report("Removed display has data", float(P.db(math.sqrt(max(removed, 1e-300)))), "dB",
            "> -200 (something was removed)", removed > 0.0,
