@@ -160,6 +160,7 @@ const char* const kUsage =
     "  --preset-at=<t>:<slug>       load a factory preset at t seconds; repeatable\n"
     "  --profile --warmup=<n>       time every processBlock; exclude n blocks from the distribution\n"
     "  --solo=<part>                product-specific isolation (see the hooks at the end of Main.cpp)\n"
+    "  --non-realtime               render as a bounce: setNonRealtime (true) (oberli/RenderSafety.h, check_bounce.py)\n"
     "  --list-params | --list-presets   JSON lists; exit\n";
 
 struct Args
@@ -184,7 +185,7 @@ Args parseArgs (int argc, char* argv[])
 {
     static const juce::StringArray known { "help", "seed", "sample-rate", "block", "max-block", "seconds", "preset", "param",
         "automate", "bend", "mod", "notes", "midi", "gate", "reprepare-at", "in", "signal", "out", "state-in", "state-out",
-        "profile", "preset-at", "warmup", "solo", "list-params", "list-presets" };
+        "profile", "preset-at", "warmup", "solo", "list-params", "list-presets", "non-realtime" };
     Args a;
     for (int i = 1; i < argc; ++i)
     {
@@ -506,7 +507,8 @@ static int run (int argc, char* argv[])
     if (! isInstrument) layout.inputBuses.add (juce::AudioChannelSet::stereo());
     layout.outputBuses.add (juce::AudioChannelSet::stereo());
     if (! processor->setBusesLayout (layout)) refuse ("the processor refuses the stereo layout");
-    processor->setNonRealtime (false);
+    const bool nonRealtime = args.has ("non-realtime");
+    processor->setNonRealtime (nonRealtime);
     processor->prepareToPlay (rate, maxBlock);
 
     // -------- state in
@@ -767,7 +769,7 @@ static int run (int argc, char* argv[])
     {
         auto applied = obj();
         set (applied, "seed", seed); set (applied, "sample_rate", rate); set (applied, "block", randomBlocks ? juce::var (blockArg) : juce::var (block));
-        set (applied, "max_block", maxBlock); set (applied, "seconds", seconds);
+        set (applied, "max_block", maxBlock); set (applied, "seconds", seconds); set (applied, "non_realtime", nonRealtime);
         set (applied, "preset", presetName.isEmpty() ? juce::var() : juce::var (presetName)); set (applied, "solo", solo.isEmpty() ? juce::var() : juce::var (solo));
         auto params = obj();
         for (auto* p : processor->getParameters())
