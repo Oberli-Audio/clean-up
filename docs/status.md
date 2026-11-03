@@ -73,9 +73,6 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 - 2026-11-01 **Sketch 4.2 says "the comb is bypassed below -60 dB Depth".** -60 dB is the
   deepest cut in the table, so taken as a slip: the comb is bypassed in code at Depth = 0 dB
   (no cut). Confirm.
-- 2026-11-01 **CPU numbers from this machine are not your machine.** The brief's budget is an
-  Apple M3 Pro; this cloud container is x86_64 Linux, 4 cores. `perf.py` rows here are
-  labelled with the machine and are a sanity check, not the budget row of the release gate.
 - 2026-11-01 **The release gate needs your two machines.** pluginval L10, the Steinberg
   validator, the macOS/Windows bundles, the arm64 smoke test, Ableton Live 10.1 under Rosetta
   and Ableton Live on Windows cannot run in a Linux container. Everything else of the gate is
@@ -93,7 +90,7 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 | G3 | **open** | per target below; `python3 "sound design/prototype/measure.py" --all` -> 38 measurements, 1 fail (Reverb T60, 2026-11-03) |
 | G4 | **in progress** | `cmake --build --preset release` -> VST3, Standalone and CleanUpHarness build; `Source/dsp/` is the hand port, every constant under its prototype name (`Source/dsp/Constants.h`). Harness, all four on, random blocks 0-4096, 44.1 / 48 / 192 kHz: finite, 0 clipped, the malloc trap armed (its self-test aborts) and silent. Open items below |
 | G5 | **null passes** (2026-11-03) | `python3 "sound design/prototype/g5_null.py"` -> peak residual, no alignment: hum -151.9, click -138.5, click on the clean vocal -142.6, noise -144.5, reverb -123.1, all four -141.0 dBFS; latency and every click repair identical. Targets F.8: hum < -120, spectral < -90. Re-run after the Reverb decision |
-| G6 | - | |
+| G6 | **machine half run** (2026-11-03) | `python3 scripts/dsp-kit/validate_plugin.py --plugin "build/CleanUp_artefacts/Release/VST3/Clean Up.vst3" --profile full --no-build --test-cmd "ctest --preset fast"` -> PASS: ctest 9 of 9, Steinberg validator 47 of 47 (SDK 3.8.1), pluginval strictness 10 at all six rates (seed 0x48505631). RTSan (`cmake --preset rtsan`, Homebrew LLVM): self-test aborts, renders at 44.1-192 kHz with all four on, random blocks, Learn, a loaded profile, Crackle and every switch automated: clean. CPU below. Open: the hosts (Ableton Live 10.1 under Rosetta, Live on Windows), the editor, goldens, the bank |
 | G7 | - | |
 
 ### G3 metric table (as measured, 2026-11-01)
@@ -484,3 +481,20 @@ on the port (hum stack < -90 dBFS, >= 95 clicks and 0 snare repairs, 12 +/- 1 dB
 Rule 13, shown failing: a harness built without the attack hold, without the second click pass
 and without the Removed totals failed exactly the three presence tests (attack hold 0.67 dB
 held against 0.67 unheld, missed 0, removed 0.0) and passed them when restored.
+
+
+### 2026-11-03 G6, rule 20: the click repair was the whole CPU cost
+Björn's Mac (M3 Pro), 48 kHz / 64, all four on, the all-four material looped to 60 s (a 1.0 s
+room, hum, pink, 300 clicks), three runs, `--profile --warmup=200`, native and `arch -x86_64`
+(the slice Live 10.1 runs). First measurement: p99.9 **40.8 %** arm64 / **52.2 %** x86_64,
+recurring max 46 / 57 % - fail. Per module: Hum, Noise and Reverb under 7 % at their maximum;
+Click p99 6 % (detection, every hop) and p99.9 26 % (the blocks where a repair fits its
+AR(192): ~2.6 M multiply-adds in scalar loops). Burg's reductions and the extrapolation's dot
+product now run in four partial sums, Burg's update loop is `__restrict`, and `arError` runs in
+the prototype's own loop order (tap outer, sample inner: no reduction, and numpy's exact sum
+order). Now: p99.9 **24.2 / 24.5 / 23.9 %** arm64, **23.3 / 23.3 / 23.2 %** x86_64; recurring max
+25.6-32.1 % / 26.5-31.1 %; over_deadline 0; G5 unchanged. **Pass, by under a point on arm64**,
+on deliberately click-dense material (5 a second); ordinary material sits far lower. If the
+bank's heaviest preset or the friend at 64 samples says otherwise, the next lever is to spread
+a hop's work over the blocks of the next hop (one more hop of latency) or to fit the repair
+model on a worker thread.

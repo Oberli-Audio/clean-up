@@ -13,6 +13,24 @@ double dbOf (double x) noexcept { return x > 0.0 ? std::max (20.0 * std::log10 (
 
 int pyRound (double x) noexcept { return (int) std::nearbyint (x); }
 
+namespace
+{
+/** sum_k pred[k] newest[-k]: one AR prediction, in four partial sums so it vectorises (the
+    extrapolation runs it order x span x 2 directions x 2 channels per repair) */
+inline double predict (const double* pred, const double* newest, int order) noexcept
+{
+    double s4[4] = { 0.0, 0.0, 0.0, 0.0 };
+    int k = 0;
+    for (; k + 4 <= order; k += 4)
+        for (int q = 0; q < 4; ++q)
+            s4[q] += pred[k + q] * newest[-(k + q)];
+    double v = (s4[0] + s4[1]) + (s4[2] + s4[3]);
+    for (; k < order; ++k)
+        v += pred[k] * newest[-k];
+    return v;
+}
+} // namespace
+
 void burg (const double* x, int n, int order, double* pred,
            double* f, double* b, double* a, double* at) noexcept
 {
@@ -28,11 +46,24 @@ void burg (const double* x, int n, int order, double* pred,
         // the denominator directly at every order, not by the textbook recursion: on a highly
         // predictable source it falls by nine orders of magnitude and the recursion's
         // subtraction is then all rounding (the prototype's `burg` docstring has the measurement)
-        double fb = 0.0, d = 0.0;
-        for (int j = 0; j < n - m - 1; ++j)
+        // four partial sums so the loop vectorises (rule 20: this fit is the costliest thing a
+        // hop can do); the sum order differs from numpy's pairwise one only in the last bits
+        const int len = n - m - 1;
+        const double* fm = f + m + 1;
+        double fb4[4] = { 0.0, 0.0, 0.0, 0.0 }, d4[4] = { 0.0, 0.0, 0.0, 0.0 };
+        int j = 0;
+        for (; j + 4 <= len; j += 4)
+            for (int q = 0; q < 4; ++q)
+            {
+                fb4[q] += fm[j + q] * b[j + q];
+                d4[q] += fm[j + q] * fm[j + q] + b[j + q] * b[j + q];
+            }
+        double fb = (fb4[0] + fb4[1]) + (fb4[2] + fb4[3]);
+        double d = (d4[0] + d4[1]) + (d4[2] + d4[3]);
+        for (; j < len; ++j)
         {
-            fb += f[m + 1 + j] * b[j];
-            d += f[m + 1 + j] * f[m + 1 + j] + b[j] * b[j];
+            fb += fm[j] * b[j];
+            d += fm[j] * fm[j] + b[j] * b[j];
         }
         if (d <= 1.0e-300)
             break;
@@ -42,11 +73,13 @@ void burg (const double* x, int n, int order, double* pred,
         for (int j = 0; j <= m + 1; ++j)
             at[j] = a[j] - mu * a[m + 1 - j];
         std::copy (at, at + m + 2, a);
-        for (int j = 0; j < n - m - 1; ++j)
+        double* __restrict fu = f + m + 1;          // f and b never alias: let it vectorise
+        double* __restrict bu = b;
+        for (int jj = 0; jj < len; ++jj)
         {
-            const double ff = f[m + 1 + j], bb = b[j];
-            f[m + 1 + j] = ff - mu * bb;
-            b[j] = bb - mu * ff;
+            const double ff = fu[jj], bb = bu[jj];
+            fu[jj] = ff - mu * bb;
+            bu[jj] = bb - mu * ff;
         }
     }
     for (int j = 0; j < order; ++j)
@@ -55,14 +88,16 @@ void burg (const double* x, int n, int order, double* pred,
 
 void arError (const double* x, int n, const double* pred, int order, double* e) noexcept
 {
-    for (int i = 0; i < n; ++i)
+    // the prototype's loop order exactly (one tap at a time over all samples): the inner loop
+    // has no reduction, so it vectorises, and every e[i] is summed in the same order as numpy's
+    std::copy (x, x + n, e);
+    for (int k = 0; k < order; ++k)
     {
-        double v = x[i];
-        const int kmax = std::min (order, i);
-        for (int k = 0; k < kmax; ++k)
-            if (pred[k] != 0.0)
-                v -= pred[k] * x[i - 1 - k];
-        e[i] = v;
+        const double pk = pred[k];
+        if (pk == 0.0)
+            continue;
+        for (int i = k + 1; i < n; ++i)
+            e[i] -= pk * x[i - 1 - k];
     }
 }
 
@@ -177,9 +212,7 @@ bool ClickRepair::extrapolate (const double* buf, int start, int length, const d
     std::copy (left, left + order, ext.begin());                       // ext[t] in time order
     for (int i = 0; i < length; ++i)
     {
-        double v = 0.0;
-        for (int kk = 0; kk < order; ++kk)
-            v += pr[kk] * ext[(size_t) (order + i - 1 - kk)];
+        const double v = predict (pr, ext.data() + order + i - 1, order);
         ext[(size_t) (order + i)] = v;
         fwd[(size_t) i] = v;
     }
@@ -187,9 +220,7 @@ bool ClickRepair::extrapolate (const double* buf, int start, int length, const d
         ext[(size_t) (order - 1 - j)] = right[j];
     for (int i = 0; i < length; ++i)
     {
-        double v = 0.0;
-        for (int kk = 0; kk < order; ++kk)
-            v += pr[kk] * ext[(size_t) (order + i - 1 - kk)];
+        const double v = predict (pr, ext.data() + order + i - 1, order);
         ext[(size_t) (order + i)] = v;
         bwd[(size_t) (length - 1 - i)] = v;
     }
