@@ -40,6 +40,7 @@ void Engine::prepare (double sampleRate, int maxBlock)
     lookahead = click.lookahead;
     latency = frame + lookahead;
     switchLen = std::max (1, pyRound (k::SWITCH_XFADE_S * fs));
+    trimSteps = std::max (1, pyRound (k::TRIM_RAMP_S * fs));
 
     // the Removed display's bands
     jassert (pyRound (k::BANDS_PER_OCTAVE * std::log2 (k::BAND_HIGH_HZ / k::BAND_LOW_HZ)) == k::NUM_BANDS);
@@ -105,6 +106,13 @@ void Engine::reset() noexcept
     removedTotal.fill (0.0);
     hopsDone = 0;
     fed = 0;
+    snap = true;
+    humMix = 0.0;
+    listenMix = { 1.0, 0.0, 0.0 };
+    bypassMix = 0.0;
+    trimGain = trimTarget = 1.0;
+    trimLeft = 0;
+    trimFactor = 1.0;
 }
 
 void Engine::startEngine() noexcept
@@ -233,11 +241,34 @@ void Engine::processChunk (float* l, float* r, int n, const EngineParams& p) noe
         xR[(size_t) i] = (double) r[i];
     }
 
-    // Bypass does not move the reported latency; it stops the engine and hands out the
-    // aligned dry signal, so bypass is a wire.
+    // The switches - Hum on/off, Listen, Bypass - are crossfaded over SWITCH_XFADE_S (rules 2
+    // and 7). Every crossfade state snaps to its parameter on the first chunk after reset, so
+    // static parameters render exactly as without them (the prototype's process_block).
+    const double step = 1.0 / switchLen;
+    const double listenTarget[3] = { p.listen == LISTEN_OUTPUT ? 1.0 : 0.0,
+                                     p.listen == LISTEN_REMOVED ? 1.0 : 0.0,
+                                     p.listen == LISTEN_INPUT ? 1.0 : 0.0 };
+    const double trimTargetNow = std::pow (10.0, p.trim / 20.0);
+    if (snap)
+    {
+        humMix = p.humOn ? 1.0 : 0.0;
+        for (int m = 0; m < 3; ++m) listenMix[(size_t) m] = listenTarget[m];
+        bypassMix = p.bypass ? 1.0 : 0.0;
+        trimGain = trimTarget = trimTargetNow;
+        trimLeft = 0;
+        snap = false;
+    }
+    auto ramp = [step] (double v, double target) noexcept
+    {
+        return target > v ? std::min (v + step, target) : std::max (v - step, target);
+    };
+
+    // Bypass does not move the reported latency; once its crossfade has run it stops the
+    // engine and hands out the aligned dry signal: a wire, not trimmed.
     const bool want = p.spectral();
+    const bool bypassed = p.bypass && bypassMix >= 1.0;
     bool running = false;
-    if (p.bypass)
+    if (bypassed)
     {
         engineOn = false;
         fade = 0.0;
@@ -266,23 +297,35 @@ void Engine::processChunk (float* l, float* r, int n, const EngineParams& p) noe
         alignedL[(size_t) i] = dryL[(size_t) at];
         alignedR[(size_t) i] = dryR[(size_t) at];
     }
+    const auto& wireL = currentAlignment > 0 ? alignedL : xL;
+    const auto& wireR = currentAlignment > 0 ? alignedR : xR;
 
-    if (p.bypass)
+    if (bypassed)
     {
-        const auto& srcL = currentAlignment > 0 ? alignedL : xL;
-        const auto& srcR = currentAlignment > 0 ? alignedR : xR;
         for (int i = 0; i < n; ++i)
         {
-            l[i] = (float) srcL[(size_t) i];
-            r[i] = (float) srcR[(size_t) i];
+            l[i] = (float) wireL[(size_t) i];
+            r[i] = (float) wireR[(size_t) i];
         }
         return;
     }
 
+    // Hum, crossfaded on and off; the comb runs while its share is above zero
     std::copy (xL.begin(), xL.begin() + n, humL.begin());
     std::copy (xR.begin(), xR.begin() + n, humR.begin());
-    if (p.humOn)
+    const double humTarget = p.humOn ? 1.0 : 0.0;
+    if (humMix > 0.0 || humTarget > 0.0)
+    {
         hum.process (humL.data(), humR.data(), n, p);
+        double h = humMix;
+        for (int i = 0; i < n; ++i)
+        {
+            h = ramp (h, humTarget);
+            humL[(size_t) i] = xL[(size_t) i] * (1.0 - h) + humL[(size_t) i] * h;
+            humR[(size_t) i] = xR[(size_t) i] * (1.0 - h) + humR[(size_t) i] * h;
+        }
+        humMix = h;
+    }
 
     if (running)
     {
@@ -302,17 +345,16 @@ void Engine::processChunk (float* l, float* r, int n, const EngineParams& p) noe
             std::memmove (inR.data(), inR.data() + used, sizeof (double) * (size_t) (inCount - used));
             inCount -= used;
         }
-        // the switch crossfade (rule 2); while the engine primes the hum-only signal is heard
+        // the latency-state crossfade (rule 2); while the engine primes the hum-only signal is heard
         if (primeLeft > 0)
             primeLeft = std::max (0, primeLeft - n);
         const double target = (engineOn && primeLeft == 0) ? 1.0 : 0.0;
-        const double step = 1.0 / switchLen;
         double v = fade;
         const auto& unL = currentAlignment > 0 ? alignedL : humL;
         const auto& unR = currentAlignment > 0 ? alignedR : humR;
         for (int i = 0; i < n; ++i)
         {
-            v = target > v ? std::min (v + step, target) : std::max (v - step, target);
+            v = ramp (v, target);
             humL[(size_t) i] = unL[(size_t) i] * (1.0 - v) + outL[(size_t) i] * v;
             humR[(size_t) i] = unR[(size_t) i] * (1.0 - v) + outR[(size_t) i] * v;
         }
@@ -322,23 +364,44 @@ void Engine::processChunk (float* l, float* r, int n, const EngineParams& p) noe
         outCount -= n;
     }
 
-    // humL/R is now the output y
+    // humL/R is now y. Listen (crossfaded), Trim (a multiplicative ramp), Bypass (crossfaded)
+    if (trimTargetNow != trimTarget)
+    {
+        trimTarget = trimTargetNow;
+        trimLeft = trimSteps;
+        trimFactor = std::exp ((std::log (trimTarget) - std::log (trimGain)) / trimSteps);
+    }
+    const double bypassTarget = p.bypass ? 1.0 : 0.0;
+    const bool bypassFading = bypassMix > 0.0 || bypassTarget > 0.0;
+    double g0 = listenMix[0], g1 = listenMix[1], g2 = listenMix[2], b = bypassMix;
     for (int i = 0; i < n; ++i)
     {
+        g0 = ramp (g0, listenTarget[0]);
+        g1 = ramp (g1, listenTarget[1]);
+        g2 = ramp (g2, listenTarget[2]);
+        const double dl = alignedL[(size_t) i], dr = alignedR[(size_t) i];
         double yl = humL[(size_t) i], yr = humR[(size_t) i];
-        if (p.listen == LISTEN_INPUT)
+        yl = g0 * yl + g1 * (dl - yl) + g2 * dl;
+        yr = g0 * yr + g1 * (dr - yr) + g2 * dr;
+        if (trimLeft > 0)
         {
-            yl = alignedL[(size_t) i];
-            yr = alignedR[(size_t) i];
+            trimGain *= trimFactor;
+            if (--trimLeft == 0)
+                trimGain = trimTarget;
         }
-        else if (p.listen == LISTEN_REMOVED)
+        yl = yl * trimGain;
+        yr = yr * trimGain;
+        if (bypassFading)
         {
-            yl = alignedL[(size_t) i] - yl;
-            yr = alignedR[(size_t) i] - yr;
+            b = ramp (b, bypassTarget);
+            yl = yl * (1.0 - b) + wireL[(size_t) i] * b;
+            yr = yr * (1.0 - b) + wireR[(size_t) i] * b;
         }
         l[i] = (float) yl;
         r[i] = (float) yr;
     }
+    listenMix = { g0, g1, g2 };
+    bypassMix = b;
 }
 
 //==============================================================================

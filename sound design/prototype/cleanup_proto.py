@@ -175,8 +175,10 @@ REVERB_ATTACK_HOLD_S = 0.040            # Attacks % of this window is held at ga
 REVERB_FLUX_TAU_S = 0.200               # running mean of the spectral flux
 REVERB_FLUX_FACTOR = 1.6                # an onset is a flux this much above its mean
 
-# Switching between the two latency states (rule 2: switches crossfaded over 10-20 ms).
+# Switching between the two latency states, and Hum on/off, Listen and Bypass (rule 2:
+# switches crossfaded over 10-20 ms).
 SWITCH_XFADE_S = 0.015
+TRIM_RAMP_S = 0.092                     # Trim's multiplicative ramp: 4.6 x the table's 20 ms tau
 
 LISTEN_OUTPUT, LISTEN_REMOVED, LISTEN_INPUT = 0, 1, 2
 MODE_CLICKS, MODE_CRACKLE = 0, 1
@@ -999,6 +1001,7 @@ class CleanUp:
         self.lookahead = self.click.lookahead
         self.latency = self.frame + self.lookahead
         self.switch_len = max(1, int(round(SWITCH_XFADE_S * fs)))
+        self.trim_steps = max(1, int(round(TRIM_RAMP_S * fs)))
         self.count_frames = max(1, int(round(CLICK_COUNT_WINDOW_S * fs / self.hop)))
         self.band_edges = self._band_edges()
         self.reset()
@@ -1031,6 +1034,14 @@ class CleanUp:
         self.removed_bands = np.zeros(nb)
         self.frames_done = 0
         self.fed = 0
+        # the switch crossfades and Trim snap to the parameters on the first block
+        self.snap = True
+        self.hum_mix = 0.0
+        self.listen_mix = np.array([1.0, 0.0, 0.0])
+        self.bypass_mix = 0.0
+        self.trim_gain = self.trim_target = 1.0
+        self.trim_left = 0
+        self.trim_factor = 1.0
 
     def _start_engine(self):
         self.engine_on = True
@@ -1093,10 +1104,26 @@ class CleanUp:
         if n == 0:
             return x.copy()
 
-        # Bypass does not move the reported latency (the host's compensation must not churn);
-        # it stops the engine and hands out the aligned dry signal, so bypass is a wire.
+        # The switches - Hum on/off, Listen, Bypass - are crossfaded over SWITCH_XFADE_S (rules 2
+        # and 7). Hard, each read -2.6 dB on max_click_db against -43 dB steady, on a 50 Hz sine
+        # on the first notch. Every crossfade state snaps to its parameter on the first block
+        # after reset, so a render with static parameters is exactly what it was without them.
+        step = 1.0 / self.switch_len
+        listen_target = np.array([float(p.listen == i) for i in range(3)])
+        if self.snap:
+            self.hum_mix = 1.0 if p.humOn else 0.0
+            self.listen_mix = listen_target.copy()
+            self.bypass_mix = 1.0 if p.bypass else 0.0
+            self.trim_gain = self.trim_target = undb(p.trim)
+            self.trim_left = 0
+            self.snap = False
+
+        # Bypass does not move the reported latency (the host's compensation must not churn).
+        # Once its crossfade has run, it stops the engine and hands out the aligned dry signal:
+        # a wire, not trimmed.
         want = p.spectral
-        if p.bypass:
+        bypassed = p.bypass and self.bypass_mix >= 1.0
+        if bypassed:
             self.engine_on = False
             self.fade = 0.0
             running = False
@@ -1116,12 +1143,20 @@ class CleanUp:
         keep = self.frame + self.lookahead + 2 * self.hop + n
         if self.dry.shape[0] > keep:
             self.dry = self.dry[-keep:]
+        wire = dry_aligned if self.alignment > 0 else x.copy()
 
-        if p.bypass:
-            # a wire (rule 7): latency-compensated and not trimmed
-            return dry_aligned if self.alignment > 0 else x.copy()
+        if bypassed:
+            return wire
 
-        hum_out = self.hum.process(x.copy(), p) if p.humOn else x.copy()
+        # Hum, crossfaded on and off; the comb runs while its share is above zero
+        h_target = 1.0 if p.humOn else 0.0
+        if self.hum_mix > 0.0 or h_target > 0.0:
+            proc = self.hum.process(x.copy(), p)
+            hm = self._ramp(self.hum_mix, h_target, step, n)
+            self.hum_mix = float(hm[-1])
+            hum_out = x * (1.0 - hm)[:, None] + proc * hm[:, None]
+        else:
+            hum_out = x.copy()
 
         if running:
             self.in_buf = np.vstack([self.in_buf, hum_out])
@@ -1150,11 +1185,47 @@ class CleanUp:
         else:
             y = hum_out
 
-        if p.listen == LISTEN_INPUT:
-            y = dry_aligned
-        elif p.listen == LISTEN_REMOVED:
-            y = dry_aligned - y
-        return y * undb(p.trim)
+        # Listen, crossfaded: each of Output, Removed and Input has its own share
+        g = np.empty((n, 3))
+        for i in range(3):
+            g[:, i] = self._ramp(float(self.listen_mix[i]), float(listen_target[i]), step, n)
+        self.listen_mix = g[-1].copy()
+        y = (g[:, 0:1] * y + g[:, 1:2] * (dry_aligned - y) + g[:, 2:3] * dry_aligned)
+
+        # Trim: a multiplicative ramp over TRIM_RAMP_S, the same arithmetic as the C++
+        y = y * self._trim_gains(undb(p.trim), n)[:, None]
+
+        # Bypass, crossfaded into the wire
+        b_target = 1.0 if p.bypass else 0.0
+        if self.bypass_mix > 0.0 or b_target > 0.0:
+            bm = self._ramp(self.bypass_mix, b_target, step, n)
+            self.bypass_mix = float(bm[-1])
+            y = y * (1.0 - bm)[:, None] + wire * bm[:, None]
+        return y
+
+    @staticmethod
+    def _ramp(v, target, step, n):
+        """v moving linearly towards target by step per sample: the n values after each step."""
+        out = np.empty(n)
+        for i in range(n):
+            v = min(v + step, target) if target > v else max(v - step, target)
+            out[i] = v
+        return out
+
+    def _trim_gains(self, target, n):
+        if target != self.trim_target:
+            self.trim_target = target
+            self.trim_left = self.trim_steps
+            self.trim_factor = math.exp((math.log(target) - math.log(self.trim_gain)) / self.trim_steps)
+        out = np.empty(n)
+        for i in range(n):
+            if self.trim_left > 0:
+                self.trim_gain *= self.trim_factor
+                self.trim_left -= 1
+                if self.trim_left == 0:
+                    self.trim_gain = self.trim_target
+            out[i] = self.trim_gain
+        return out
 
     # ---- editor actions (brief: Find, Learn, Estimate write parameters as one host edit)
     def find_hum(self, x):
@@ -1446,6 +1517,28 @@ def selftest():
     rv12 = float(db(np.abs(yv - v12[:yv.shape[0]]).max()))
     check("a runaway repair falls back to the detection model before the bridge", rv12 <= -35.0,
           "%.1f dBFS on the clean vocal's first 1.2 s (%d repair)" % (rv12, cuv.click.caught))
+
+    # 16. Switch defect found at G4: Hum off, Listen and Bypass were hard switches. A 50 Hz sine
+    # on the first notch, the switch thrown at 1 s: the largest step stays a sine's, not a jump.
+    ts = np.arange(int(2.0 * 48000)) / 48000.0
+    sn = 0.25 * np.sin(2.0 * math.pi * 50.0 * ts)
+    xs2 = np.stack([sn, sn], axis=1)
+
+    def switched(before, after):
+        cu = CleanUp()
+        cu.prepare(48000.0, 512)
+        out = []
+        for i in range(0, xs2.shape[0], 512):
+            out.append(cu.process_block(xs2[i:i + 512], before if i < 48000 else after))
+        y = np.vstack(out)
+        return float(db(np.abs(np.diff(y, axis=0)).max() / np.abs(y).max()))
+
+    base = dict(humOn=True, humDepth=-60.0)
+    for name, a, b in (("Hum off", Params(**base), Params(humDepth=-60.0)),
+                       ("Listen to Removed", Params(**base), Params(listen=LISTEN_REMOVED, **base)),
+                       ("Bypass on", Params(**base), Params(bypass=True, **base))):
+        step_db = switched(a, b)
+        check("switching %s is click-free" % name, step_db <= -20.0, "largest step %.1f dB" % step_db)
 
     print("\n" + ("selftest: all good" if ok else "selftest: FAILURES above"))
     return 0 if ok else 1

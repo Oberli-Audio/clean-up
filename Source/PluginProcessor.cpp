@@ -61,7 +61,6 @@ void CleanUpAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     dsp.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     for (auto& s : smoothed)
         s.value.reset (sampleRate, (double) tauMsOf (s.id) * 4.6 / 1000.0);
-    trimSmoothed.reset (sampleRate, (double) tauMsOf (Params::trim) * 4.6 / 1000.0);
     snapSmoothers.store (true);
     juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) juce::jmax (1, samplesPerBlock), 1 };
     for (auto* f : { &rmsFilterL, &rmsFilterR })
@@ -113,8 +112,6 @@ cleanup::EngineParams CleanUpAudioProcessor::readParams (int numSamples) noexcep
             s.value.skip (numSamples);
         }
     }
-    if (snap)
-        trimSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (trimP->load()));
 
     auto v = [this] (SmoothedIndex i) { return (double) smoothed[(size_t) i].value.getCurrentValue(); };
     cleanup::EngineParams p;
@@ -138,7 +135,7 @@ cleanup::EngineParams CleanUpAudioProcessor::readParams (int numSamples) noexcep
     p.reverbTail = v (sReverbTail);
     p.reverbAttacks = v (sReverbAttacks);
     p.listen = juce::roundToInt (listenP->load());
-    p.trim = 0.0;                                  // applied below, per sample
+    p.trim = trimP->load();                        // the engine ramps it per sample
     p.bypass = bypassP->load() >= 0.5f;
     return p;
 }
@@ -161,17 +158,9 @@ void CleanUpAudioProcessor::render (juce::AudioBuffer<float>& buffer, bool force
     auto* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : l;
     dsp.process (l, r, numSamples, p);
 
-    // Trim, smoothed per sample; a bypass is a wire, so it is not trimmed
-    trimSmoothed.setTargetValue (juce::Decibels::decibelsToGain (trimP->load()));
     float lastL = 0.0f, lastR = 0.0f;
     for (int i = 0; i < numSamples; ++i)
     {
-        const float g = trimSmoothed.getNextValue();
-        if (! p.bypass)
-        {
-            l[i] *= g;
-            if (r != l) r[i] *= g;
-        }
         lastL = rmsFilterL.processSample (0, l[i]);
         lastR = rmsFilterR.processSample (0, r[i]);
     }

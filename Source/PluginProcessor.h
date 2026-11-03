@@ -16,8 +16,8 @@
     atomics, never by string lookup; nothing on the audio thread allocates, locks or logs. The
     continuous parameters are smoothed at block rate with the table's tau (Params::smoothing),
     as linear ramps so a parameter that does not move is exactly its value (G5 nulls the
-    engine against the prototype); Trim is smoothed per sample. The switches go to the engine
-    as they are; their crossfades are an open G4 item (docs/status.md).
+    engine against the prototype). The switches' crossfades and Trim's per-sample ramp are
+    the engine's, so the prototype runs the same arithmetic.
 
     The DSP is cleanup::Engine (Source/dsp/), the hand port of the G2 prototype. Its latency
     (0, or frame + lookahead once Click, Noise or Reverb is on) is published from the message
@@ -101,7 +101,6 @@ private:
     std::atomic<float>* bypassP = nullptr;
 
     cleanup::Engine dsp;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> trimSmoothed;
     std::atomic<bool> snapSmoothers { true };
     double currentSampleRate = 48000.0;
     std::atomic<float> rmsL { 0.0f }, rmsR { 0.0f };

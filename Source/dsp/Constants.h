@@ -72,8 +72,9 @@ inline constexpr double REVERB_ATTACK_HOLD_S = 0.040;
 inline constexpr double REVERB_FLUX_TAU_S = 0.200;
 inline constexpr double REVERB_FLUX_FACTOR = 1.6;
 
-// Switching between the two latency states (rule 2)
+// Switching between the two latency states, Hum on/off, Listen and Bypass (rule 2)
 inline constexpr double SWITCH_XFADE_S = 0.015;
+inline constexpr double TRIM_RAMP_S = 0.092;   // Trim's multiplicative ramp: 4.6 x the table's 20 ms tau
 
 // The Removed display's bands: 1/6 octave, 50 Hz to 10 kHz (sketch 4.6)
 inline constexpr double BAND_LOW_HZ = 50.0;

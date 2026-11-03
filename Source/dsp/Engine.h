@@ -24,7 +24,8 @@
     announced is processed in chunks of at most max(maxBlock, hop), so the buffers never grow;
     a block up to that size runs exactly as one prototype `process_block` call (G5).
 
-    Trim is not applied here: the processor applies it per sample, smoothed (rule 2). */
+    The switches (Hum on/off, Listen, Bypass) are crossfaded and Trim is a multiplicative ramp
+    here, in the engine, so the prototype runs the same arithmetic (rules 2 and 7). */
 
 namespace cleanup
 {
@@ -92,6 +93,12 @@ private:
     bool engineOn = false;
     int primeLeft = 0, currentAlignment = 0;
     double fade = 0.0;
+    // the switch crossfades and Trim, snapped on the first chunk after reset
+    bool snap = true;
+    double humMix = 0.0, bypassMix = 0.0;
+    std::array<double, 3> listenMix { 1.0, 0.0, 0.0 };
+    double trimGain = 1.0, trimTarget = 1.0, trimFactor = 1.0;
+    int trimLeft = 0, trimSteps = 1;
     std::int64_t fed = 0;
     std::atomic<bool> learnRequested { false };
 };

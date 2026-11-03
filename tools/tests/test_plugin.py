@@ -229,6 +229,22 @@ class Properties(Timed):
                     self.assertEqual(res["health"]["nan"], 0)
 
 
+class Switches(Timed):
+    def test_switches_are_click_free(self):                                # rules 2 and 7
+        # a 50 Hz sine on the first notch: thrown hard, each switch read -2.6 dB, crossfaded
+        # it reads the sine's own largest step (-43.7 dB)
+        hum = {"humDepth": norm("humDepth", -60.0)}
+        cases = {"Hum off": dict(hum, automate="humOn:0=1,1.0=1,1.0001=0"),
+                 "Listen to Removed": dict(hum, humOn=1, automate="listen:0=0,1.0=0,1.0001=%g" % norm("listen", 1)),
+                 "Bypass on": dict(hum, humOn=1, automate="bypass:0=0,1.0=0,1.0001=1")}
+        for name, spec in cases.items():
+            with self.subTest(switch=name):
+                spec = dict(spec)
+                automate = spec.pop("automate")
+                res = run(spec, signal="sine:50:-12", seconds=2.0, automate=automate)
+                self.assertLess(res["health"]["max_click_db"], -20.0, "%s clicks" % name)
+
+
 class MustDo(Timed):
     """The brief's must_do lines, on the port."""
 
@@ -369,7 +385,7 @@ if __name__ == "__main__":
     if label:
         loader = unittest.TestLoader()
         suite = unittest.TestSuite()
-        for cls in (Contract, RateAndBlock, Health, Properties, MustDo, Goldens, DefiningFeatures, Targets):
+        for cls in (Contract, RateAndBlock, Health, Properties, Switches, MustDo, Goldens, DefiningFeatures, Targets):
             if cls.label == label:
                 suite.addTests(loader.loadTestsFromTestCase(cls))
         t0 = time.time()

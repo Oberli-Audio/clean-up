@@ -156,7 +156,7 @@ wired to it at G4, with plugin-ui-bob.
 Build: `cmake --preset release && cmake --build --preset release` is red on purpose, only in
 `Source/PluginProcessor.cpp` (the template processor still references `Params::outGain` and
 `Params::mix`, which the real `parameters.csv` does not have; the processor is rewritten at G4).
-Tests: the prototype selftest is green, 23 checks
+Tests: the prototype selftest is green, 26 checks
 (`python3 "sound design/prototype/cleanup_proto.py" --selftest`); `ctest --preset fast` runs the
 four shared tests (oberli_build_tests, oberli_loudness, oberli_shared, oberli_copy), all pass;
 the product suite registers once the harness builds. On this Mac CMake finds Homebrew's
@@ -165,8 +165,8 @@ python3.12 first, which has no numpy: configure with
 Open questions for the owner: the Waiting for Björn section above.
 Next command, to resume exactly where this stopped:
 the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: the G4 open
-items below (switch crossfades first, then the profile in the state), each with its test.
-`ctest --preset fast` (9 tests, 27 s) and `ctest --test-dir build -L render` (15 s) are green.
+items below (the Learned profile in the state next), each with its test.
+`ctest --preset fast` (9 tests) and `ctest --test-dir build -L render` are green.
 
 ## Decisions
 
@@ -440,9 +440,14 @@ harness target lacked `JucePlugin_Name` / `JucePlugin_VersionString` (the templa
 hidden until the processor compiled); added as the snapshot and test targets have them.
 
 ### G4 open items (2026-11-03)
-- **Switch crossfades (rules 2 and 7).** The prototype hard-switches Hum on/off, Listen and
-  Bypass, and the port does the same so G5 can null. Each gets a 15 ms crossfade, in both, with
-  a test (`max_click_db` across the switch).
+- ~~Switch crossfades (rules 2 and 7)~~ done 2026-11-03: Hum on/off, Listen and Bypass are
+  crossfaded over `SWITCH_XFADE_S` (15 ms) and Trim is a multiplicative ramp over
+  `TRIM_RAMP_S`, in the prototype and in the engine (Trim moved out of the processor so both
+  run the same arithmetic); each state snaps on the first block after reset, so every static
+  number above is unchanged (G5 6 of 6, same residuals). On a 50 Hz sine on the first notch
+  each switch read -2.6 dB on `max_click_db` and now reads -43.7 dB, the sine's own step.
+  Tests: selftest `switching Hum off / Listen to Removed / Bypass on is click-free` (all three
+  -2.6 dB on the commit before) and `test_switches_are_click_free` in the fast suite.
 - **The Learned noise profile is not in the plugin state yet** (`parameters.csv`: "Profile is
   plugin state"): `State.h` `<Extra>`, with a round-trip test.
 - **Find and Estimate in the plugin** need the last 4 s of input: the shared `Analysis`
