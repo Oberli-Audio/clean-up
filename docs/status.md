@@ -6,6 +6,14 @@ module, the reverb as it stands. Recipe D.8.1.
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
 
+- 2026-11-03 **Four template bugs in the harness and the build, fixed here, to go upstream**
+  (plugin-template is generated in bob-skills, which this repo never edits - skills-bob
+  work): the harness target lacked `JucePlugin_Name` / `JucePlugin_VersionString`; it echoed
+  `sample_rate` as `48000.0`, which `dspkit.assert_echo` (a string compare) refuses; it sized
+  its work buffer to `--max-block` and handed the plugin a larger block inside it (a 768-sample
+  overrun in `test_block_larger_than_announced`); and `--list-params` reported 0 steps for an
+  `AudioParameterInt` (JUCE's `isDiscrete()` is false for it). Also `test_template.py`'s
+  `BLOCKS` holds 0, which the template harness refuses.
 - 2026-11-03 **Listening checkpoint: the reference renders are written.** `python3 "sound
   design/prototype/measure.py" renders` -> `sound design/renders/` (gitignored, to the bit from
   the seeds). A/B `<module>-in.wav` against `-out.wav`, and listen to `-removed.wav` alone:
@@ -141,8 +149,7 @@ Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
 Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - every row run
 (`measure.py --all`: 38 measurements, 1 fail); open: Reverb's T60 (Waiting for Björn) and the
 listening checkpoint 4. [~] G4 C++ port - builds, renders, nulls; open: the items under
-"G4 open items" in Decisions 5. [ ] harness tests (`tools/tests/test_plugin.py` is still the
-template scaffold) 6. [~] G5 null - passes, re-run after Reverb 7. [ ] G6 validate 8. [ ] G7.
+"G4 open items" in Decisions 5. [x] harness tests (`tools/tests/test_plugin.py`: 16 fast, 7 render) 6. [~] G5 null - passes, re-run after Reverb 7. [ ] G6 validate 8. [ ] G7.
 Machine: from 2026-11-02 Björn's Mac (Claude Code in VS Code), on `main`. `Source/oberli/` is
 refreshed from plugin-template 0e7d4f4 (`refresh_oberli.py --accent "#33B679"`); the editor is
 wired to it at G4, with plugin-ui-bob.
@@ -157,9 +164,9 @@ python3.12 first, which has no numpy: configure with
 `cmake --preset release -DPython3_EXECUTABLE=/usr/bin/python3` (the build cache keeps it).
 Open questions for the owner: the Waiting for Björn section above.
 Next command, to resume exactly where this stopped:
-the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: fill
-`tools/tests/test_plugin.py` (presence tests per defining feature, each shown failing first),
-then the G4 open items below, then `ctest --preset fast`.
+the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: the G4 open
+items below (switch crossfades first, then the profile in the state), each with its test.
+`ctest --preset fast` (9 tests, 27 s) and `ctest --test-dir build -L render` (15 s) are green.
 
 ## Decisions
 
@@ -441,4 +448,22 @@ hidden until the processor compiled); added as the snapshot and test targets hav
 - **Find and Estimate in the plugin** need the last 4 s of input: the shared `Analysis`
   `AudioCopy` ring, wired with the editor (plugin-ui-bob); the harness runs them on `--in`.
 - **The editor** is still the template stub; `Source/oberli/` is in and waits for plugin-ui-bob.
-- **The tests**: `tools/tests/test_plugin.py` is the template scaffold (it names `outGain`).
+- **The Removed bands do not contain Hum.** They are the STFT's before-and-after, and Hum runs
+  before the STFT, so the brief's "hum lines" in the overlay are not in them. The display's
+  removed energy is "in minus out, same analysis" (sketch 4.6): computed by the editor's shared
+  `Analysis` from the input and output copies, not from the engine's bands - decide with
+  plugin-ui-bob when the editor is built.
+
+### 2026-11-03 G4, the test suite
+`tools/tests/test_plugin.py`, from the kit's scaffold, on the prototype's material (`--in`):
+**fast** (16 tests, 21 s; CTest `suite_fast` with the shared ones, 9 tests): the contract echo,
+seeded bit-identity, the 36-cell rate x block matrix and random blocks from 0 with all four on,
+an oversized block, 10 s of silence at 48 k/64 with all four on (p99.9 judged), latency against
+an impulse (2624) and Hum alone at 0, the state round trip and corrupted state, and the brief's
+must-dos (all off nulls bit-exactly, bypass a delayed wire, Output + Removed = Input, Find
+50 Hz, Learn, Estimate). **render** (7 tests, 15 s; CTest `suite_render`): the three defining
+features (Removed data, the honest "missed" counter, the attack hold) and the brief's targets
+on the port (hum stack < -90 dBFS, >= 95 clicks and 0 snare repairs, 12 +/- 1 dB of noise).
+Rule 13, shown failing: a harness built without the attack hold, without the second click pass
+and without the Removed totals failed exactly the three presence tests (attack hold 0.67 dB
+held against 0.67 unheld, missed 0, removed 0.0) and passed them when restored.

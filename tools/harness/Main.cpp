@@ -552,7 +552,9 @@ static int run (int argc, char* argv[])
                 auto o = obj();
                 set (o, "id", ranged->paramID);
                 set (o, "default", (double) ranged->getDefaultValue());
-                set (o, "steps", ranged->isDiscrete() ? ranged->getNumSteps() : 0);
+                // AudioParameterInt reports its steps but not isDiscrete(): any finite step count counts
+                const bool stepped = ranged->isDiscrete() || ranged->getNumSteps() < juce::AudioProcessor::getDefaultNumParameterSteps();
+                set (o, "steps", stepped ? ranged->getNumSteps() : 0);
                 set (o, "automatable", ranged->isAutomatable());
                 list.append (o);
             }
@@ -717,7 +719,7 @@ static int run (int argc, char* argv[])
     int midiFileIndex = 0;
     juce::int64 pos = 0;
     juce::int64 total = (juce::int64) std::llround (seconds * rate);
-    juce::AudioBuffer<float> work (2, maxBlock);
+    juce::AudioBuffer<float> work (2, juce::jmax (maxBlock, block));   // a block larger than announced is the plugin's problem, not an overrun of ours
     juce::MidiBuffer midi;
 
     while (pos < total)
@@ -729,7 +731,7 @@ static int run (int argc, char* argv[])
             const double remaining = seconds - now;
             rate = r.rate; maxBlock = r.block; if (! randomBlocks) block = r.block;
             total = pos + (juce::int64) std::llround (remaining * rate);
-            work.setSize (2, maxBlock, false, false, true);
+            work.setSize (2, juce::jmax (maxBlock, block), false, false, true);
             processor->prepareToPlay (rate, maxBlock);   // no releaseResources: pluginval's non-releasing case
         }
         while (nextPreset < presetAts.size() && presetAts[nextPreset].t <= now)
@@ -851,7 +853,7 @@ static int run (int argc, char* argv[])
     set (root, "contract", 3);
     {
         auto applied = obj();
-        set (applied, "seed", seed); set (applied, "sample_rate", rate); set (applied, "block", randomBlocks ? juce::var (blockArg) : juce::var (block));
+        set (applied, "seed", seed); set (applied, "sample_rate", rate == std::floor (rate) ? juce::var ((int) rate) : juce::var (rate));   // 48000, as the contract shows it set (applied, "block", randomBlocks ? juce::var (blockArg) : juce::var (block));
         set (applied, "max_block", maxBlock); set (applied, "seconds", seconds); set (applied, "non_realtime", nonRealtime);
         set (applied, "preset", presetName.isEmpty() ? juce::var() : juce::var (presetName)); set (applied, "solo", solo.isEmpty() ? juce::var() : juce::var (solo));
         auto params = obj();

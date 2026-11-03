@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Project test scaffold - copy to <project>/tools/tests/ and fill in the TODOs.
+"""Clean Up's test suite - the project's copy of the dsp-kit scaffold (test_template.py), filled in.
 
-Drives the product's offline renderer (harness-contract.md v3) and asserts on its JSON and
-WAVs with dspkit. Run directly, or register with CTest (snippet at the bottom):
+Drives the offline renderer (harness-contract.md v3, `CleanUpHarness`) and asserts on its JSON
+and WAVs with dspkit. The test material is the prototype's (`sound design/prototype/material.py`:
+a vocal and a bass line with injected hum, clicks, pink noise and a room), written to WAV and
+fed with --in, so the port is judged on what G3 measured.
 
-    HARNESS=build/MyPluginHarness python3 -m unittest test_template -v
-    HARNESS=... python3 test_template.py --label fast     # the inner loop (D.3.6: under 60 s)
+    HARNESS=build/CleanUpHarness_artefacts/Release/CleanUpHarness python3 tools/tests/test_plugin.py --label fast
+    ... --label render
 
-Labels (D.3.1): fast = contract, rate/block matrix, health, properties (every build, < 60 s);
-render = goldens and presence tests (every commit); the host validators are not here
-(validate_plugin.py). Every test is a rule or a DoD line from the core card; the name says
-which. Per-test seconds are printed; a `fast` test over FAST_BUDGET_S fails.
+Labels (D.3.1): fast = contract, rate/block matrix, health, properties, the brief's must-dos
+(every build, < 60 s); render = the defining features and the brief's quality targets on the
+port (every commit). Every test is a rule, a must-do or a defining feature; the name says which.
 """
 import json
 import os
@@ -18,34 +19,101 @@ import sys
 import tempfile
 import time
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
-sys.path.insert(0, os.environ.get("DSPKIT", str(Path(__file__).resolve().parent)))
-import dspkit as K  # noqa: E402
+import numpy as np
 
-HARNESS = os.environ.get("HARNESS", "build/CleanUpHarness_artefacts/Release/CleanUpHarness")
-GOLDEN_DIR = Path(os.environ.get("GOLDEN_DIR", "tools/tests/golden"))   # committed goldens + sidecars
-GOLDEN_ARCH = os.environ.get("GOLDEN_ARCH", "x86_64")                # D.2.1: the slice the host runs
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, os.environ.get("DSPKIT", str(ROOT / "scripts" / "dsp-kit")))
+sys.path.insert(0, str(ROOT / "sound design" / "prototype"))
+import dspkit as K  # noqa: E402
+import material as M  # noqa: E402
+import paramgen  # noqa: E402
+
+HARNESS = os.environ.get("HARNESS", str(ROOT / "build/CleanUpHarness_artefacts/Release/CleanUpHarness"))
+GOLDEN_DIR = Path(os.environ.get("GOLDEN_DIR", str(ROOT / "tools/tests/golden")))
 DEFAULT = dict(seed=1, sample_rate=48000, block=512, seconds=2.0)
-SOURCE = dict(signal="impulse")
-PARAM = ("outGain", 0.25)            # one real parameter ID and a non-default value
+SOURCE = dict(signal="noise:pink:-30")
 RATES = (44100, 48000, 88200, 96000, 176400, 192000)
-BLOCKS = (0, 1, 13, 32, 64, 512, 4096)
-INSTRUMENT = "notes" in SOURCE
-FAST_BUDGET_S = float(os.environ.get("FAST_BUDGET_S", "20"))   # one test; the whole `fast` label stays under 60 s
-# F.8 tolerances (peak of the residual, absolute dBFS, no alignment): same machine and
-# compiler bit-exact; across slices feed-forward -100, feedback tails -80.
+BLOCKS = (1, 13, 32, 64, 512, 4096)   # zero-length blocks: test_random_block_sizes_from_zero (a render of only 0s never advances)
+FAST_BUDGET_S = float(os.environ.get("FAST_BUDGET_S", "20"))
 GOLDEN_PEAK_DB = {"same": -140.0, "cross-feedforward": -100.0, "cross-feedback": -80.0}
+FS = 48000
+TABLE = {r["id"]: r for r in paramgen.read_table(ROOT / "parameters.csv")}
+
+
+def norm(pid, plain):
+    """Plain units -> the normalised value --param takes (the table's range and centre)."""
+    r = TABLE[pid]
+    if r["choices"]:
+        return plain / (len(r["choices"].split("|")) - 1)
+    return paramgen.to_normalised(r, plain)
+
+
+ALL_FOUR = {"humOn": 1, "clickOn": 1, "noiseOn": 1, "reverbOn": 1}   # the brief's CPU preset
+PARAM = ("trim", round(norm("trim", 4.8), 6))                          # a real ID, not the default
 
 
 def run(params=None, **flags):
     f = dict(DEFAULT, **SOURCE)
     f.update(flags)
+    if "in_" in f:
+        f.pop("signal", None)
+        f["in"] = f.pop("in_")
     res = K.render(HARNESS, params, **f)
     echo = {k: v for k, v in f.items() if k in ("seed", "sample_rate", "block", "seconds", "preset")
             and not (k == "block" and str(v).startswith("random:"))}
     K.assert_echo(res, params, **echo)                                     # rule 13
     return res
+
+
+_TMP = tempfile.TemporaryDirectory()
+
+
+@lru_cache(maxsize=None)
+def wav(name):
+    """The prototype's test material, written once per run."""
+    seconds = 6.0
+    clean = M.vocal(FS, seconds)
+    if name == "vocal":
+        x = clean
+    elif name == "hum-bass":
+        x, _ = M.add_hum(M.bass(FS, seconds), FS, f0=50.0, harmonics=8, dbfs=-40.0)
+    elif name == "clicks":
+        x, _ = M.add_clicks(clean, FS, count=100, min_ms=0.5, max_ms=3.0, amp=0.5, seed=6)
+    elif name == "pink-vocal":
+        x, _ = M.add_pink(clean, FS, dbfs=-50.0, seed=4)
+    elif name == "room":
+        x = M.convolve_room(np.vstack([clean, np.zeros((2 * FS, 2))]),
+                            M.reverb_ir(FS, rt60=1.2, predelay_s=0.008, drr_db=0.0, seed=7))
+    elif name == "snare":
+        x = M.snare(FS, seconds)
+    elif name == "noise-lead":
+        lead = np.stack([M.pink(FS, int(1.5 * FS), -50.0, seed=4)] * 2, axis=1)
+        pv, _ = M.add_pink(clean, FS, dbfs=-50.0, seed=4)
+        x = np.vstack([lead, pv])
+    else:
+        raise KeyError(name)
+    path = Path(_TMP.name) / (name + ".wav")
+    K.write_wav(str(path), np.asarray(x, dtype=np.float32), FS)
+    return str(path)
+
+
+def seconds_of(path):
+    x, fs = K.read_wav(path)
+    return x.shape[0] / fs
+
+
+def render_file(name, params, **flags):
+    """Renders a material file; returns (input, output, result)."""
+    src = wav(name)
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "out.wav"
+        res = run(params, in_=src, out=out, seconds=seconds_of(src), **flags)
+        y, _ = K.read_wav(str(out))
+    x, _ = K.read_wav(src)
+    return x, y, res
 
 
 class Timed(unittest.TestCase):
@@ -67,38 +135,35 @@ class Contract(Timed):
         res = run({pid: val})
         self.assertAlmostEqual(res["applied"]["params"][pid], val, places=6)
 
-    def test_seeded_runs_are_bit_identical(self):                          # DoD: reset + seed
+    def test_seeded_runs_are_bit_identical(self):                          # rule 8
         with tempfile.TemporaryDirectory() as d:
             a, b = Path(d) / "a.wav", Path(d) / "b.wav"
-            run(out=a)
-            run(out=b)
+            run(ALL_FOUR, out=a)
+            run(ALL_FOUR, out=b)
             xa, _ = K.read_wav(a)
             xb, _ = K.read_wav(b)
             self.assertTrue((xa == xb).all(), "two seeded renders differ")
 
 
 class RateAndBlock(Timed):
-    def test_rate_block_matrix_is_clean(self):                             # DoD: 42 combinations
+    def test_rate_block_matrix_is_clean(self):                             # DoD: 42 combinations, all four on
         for fs in RATES:
             for blk in BLOCKS:
                 with self.subTest(fs=fs, block=blk):
-                    res = run(sample_rate=fs, block=blk, seconds=0.25)
+                    res = run(ALL_FOUR, sample_rate=fs, block=blk, seconds=0.25)
                     self.assertEqual(res["health"]["nan"] + res["health"]["inf"], 0)
                     self.assertLess(res["levels"]["peak_dbfs"], 0.0)
 
     def test_random_block_sizes_from_zero(self):                           # D.5.1, fuzz
-        res = run(block="random:7", max_block=1024, seconds=0.5)
+        res = run(ALL_FOUR, block="random:7", max_block=1024, seconds=0.5)
         self.assertEqual(res["health"]["nan"], 0)
 
     def test_block_larger_than_announced(self):                            # D.5.1
-        # NaN-free is not enough: a plugin that renders only the announced part of an oversized
-        # block leaves a silent gap. Compare, window by window, against the same render in
-        # announced-size blocks (seen once: a 6 dB drop in one window, whole-file
-        # RMS within 1 dB).
+        # chunked inside the engine: the oversized render must equal the announced-size one
         with tempfile.TemporaryDirectory() as d:
             a, b = Path(d) / "ref.wav", Path(d) / "big.wav"
-            run(block=256, max_block=256, seconds=0.5, out=a)
-            res = run(block=1024, max_block=256, seconds=0.5, out=b)
+            run(ALL_FOUR, block=256, max_block=256, seconds=0.5, out=a)
+            res = run(ALL_FOUR, block=1024, max_block=256, seconds=0.5, out=b)
             self.assertEqual(res["health"]["nan"], 0)
             xa, fs = K.read_wav(a)
             xb, _ = K.read_wav(b)
@@ -106,36 +171,29 @@ class RateAndBlock(Timed):
 
 
 class Health(Timed):
-    def test_silence_after_notes_has_no_denormal_storm_or_dc(self):        # DoD: silence test, 48 k/64
-        flags = dict(seconds=10.0, profile=1, sample_rate=48000, block=64, warmup=200)
-        if INSTRUMENT:
-            flags["gate"] = 0.5                                             # notes off early, the rest silent
-        res = run(**flags)
+    def test_silence_has_no_denormal_storm_or_dc(self):                    # DoD: 60 s of silence, all four on
+        res = run(ALL_FOUR, signal="silence", seconds=10.0, profile=1, block=64, warmup=200)
+        self.assertEqual(res["health"]["nan"] + res["health"]["inf"], 0)
         self.assertLess(res["levels"]["dc_dbfs"], -80.0)
         self.assertLess(res["profile"]["p999_pct"], 25.0)                  # rule 20: p99.9 judged
-        print("over_deadline (reported, not judged, rule 20):", res["profile"]["over_deadline"])
+        print("over_deadline (reported, not judged, rule 20):", res["profile"]["over_deadline"], end=" ")
 
-    def test_latency_matches_impulse(self):                                # rule 7
-        if INSTRUMENT:
-            self.skipTest("effects only")
+    def test_latency_matches_impulse(self):                                # rule 7, must-do: one fixed latency
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "imp.wav"
-            res = run(signal="impulse", out=out)
+            # Click and Noise at Reduction 0 dB: the engine runs and passes the impulse through
+            res = run({"clickOn": 1, "noiseOn": 1, "noiseReduction": norm("noiseReduction", 0.0)},
+                      signal="impulse", out=out)
             x, fs = K.read_wav(out)
             ref = x[:, :1] * 0.0
             ref[0, 0] = 0.5
-            measured = K.latency_samples(ref, x[:, :1])
-            self.assertEqual(measured, res["applied"]["latency_samples"])
+            self.assertEqual(K.latency_samples(ref, x[:, :1]), res["applied"]["latency_samples"])
+            self.assertEqual(res["applied"]["latency_samples"], 2624)      # frame + lookahead at 48 kHz
 
-    def test_tail_is_silent_after_reported_tail(self):                     # D.2.5, D.5.1
-        if not INSTRUMENT:
-            self.skipTest("instruments; effects feed an impulse instead")
-        with tempfile.TemporaryDirectory() as d:
-            out = Path(d) / "tail.wav"
-            res = run(seconds=6.0, gate=1.0, out=out)
-            x, fs = K.read_wav(out)
-            after = x[int((1.0 + res["applied"]["tail_seconds"]) * fs):]
-            self.assertLess(K.peak_dbfs(after) if after.size else -400.0, -90.0)
+    def test_hum_alone_is_zero_latency(self):                              # must-do
+        res = run({"humOn": 1}, signal="impulse")
+        self.assertEqual(res["applied"]["latency_samples"], 0)
+        self.assertEqual(res["product"]["latency_state"], 0)
 
 
 class Properties(Timed):
@@ -162,23 +220,57 @@ class Properties(Timed):
                 with self.subTest(case=name):
                     (d / "bad.state").write_bytes(blob)
                     try:
-                        res = K.render(HARNESS, state_in=d / "bad.state", seconds=0.25, **{k: v for k, v in DEFAULT.items() if k != "seconds"}, **SOURCE)
+                        res = K.render(HARNESS, state_in=d / "bad.state", seconds=0.25,
+                                       **{k: v for k, v in DEFAULT.items() if k != "seconds"}, **SOURCE)
                     except RuntimeError as e:
-                        # a clean refusal (non-zero exit with a message) is acceptable; a crash is not
                         self.assertNotIn("Segmentation", str(e))
                         self.assertNotIn("-11", str(e).split(")")[0])
                         continue
                     self.assertEqual(res["health"]["nan"], 0)
 
 
+class MustDo(Timed):
+    """The brief's must_do lines, on the port."""
+
+    def test_all_modules_off_nulls_exactly(self):
+        x, y, res = render_file("vocal", None)
+        self.assertEqual(res["applied"]["latency_samples"], 0)
+        self.assertTrue((x.astype(np.float32) == y.astype(np.float32)).all(), "all off is not a wire")
+
+    def test_bypass_is_a_latency_compensated_wire(self):                   # rule 7
+        x, y, res = render_file("vocal", dict(ALL_FOUR, bypass=1))
+        lat = res["applied"]["latency_samples"]
+        self.assertEqual(lat, 2624)
+        self.assertTrue((y[lat:] == x[: x.shape[0] - lat]).all(), "bypass is not the delayed input")
+
+    def test_removed_listen_plus_output_is_input(self):                    # must-do: Removed listen
+        _, yo, res = render_file("pink-vocal", ALL_FOUR)
+        _, yr, _ = render_file("pink-vocal", dict(ALL_FOUR, listen=norm("listen", 1)))
+        _, yi, _ = render_file("pink-vocal", dict(ALL_FOUR, listen=norm("listen", 2)))
+        self.assertLess(K.peak_dbfs(yo + yr - yi), -120.0)
+        self.assertGreater(K.rms_dbfs(yr), -80.0, "Removed is silent")
+
+    def test_find_measures_the_mains(self):                                # must-do: Find
+        _, _, res = render_file("hum-bass", {"humOn": 1}, find=1)
+        self.assertAlmostEqual(res["product"]["find_hz"], 50.0, delta=0.3)
+
+    def test_learn_captures_a_profile(self):                               # must-do: Learn
+        _, _, res = render_file("noise-lead", {"noiseOn": 1, "noiseMode": norm("noiseMode", 0)}, learn_at=0.1)
+        self.assertTrue(res["product"]["noise_profile_captured"])
+
+    def test_estimate_measures_the_tail(self):                             # must-do: Estimate
+        _, _, res = render_file("room", {"reverbOn": 1}, estimate=1)
+        self.assertAlmostEqual(res["product"]["estimate_s"], 1.2, delta=0.4)
+
+
 class Goldens(Timed):
-    """F.13.6: a golden per defining feature, rendered on GOLDEN_ARCH, with a sidecar."""
+    """F.13.6: Tier P keeps one native golden at a stated tolerance."""
     label = "render"
 
     def test_goldens_match(self):
         sidecars = sorted(GOLDEN_DIR.glob("*.json")) if GOLDEN_DIR.exists() else []
         if not sidecars:
-            self.skipTest("no goldens in %s yet (render them with the harness, write <name>.json beside each)" % GOLDEN_DIR)
+            self.skipTest("no goldens in %s yet (rendered at G6, after the Reverb decision)" % GOLDEN_DIR)
         for sc in sidecars:
             meta = json.loads(sc.read_text())
             with self.subTest(golden=sc.stem), tempfile.TemporaryDirectory() as d:
@@ -190,26 +282,83 @@ class Goldens(Timed):
                 kind = "same" if arch == meta.get("arch") else ("cross-feedback" if meta.get("feedback") else "cross-feedforward")
                 now, fs = K.read_wav(out)
                 gold, _ = K.read_wav(sc.with_suffix(".wav"))
-                r = K.null_residual(gold, now, align=False)                   # a latency change must fail
+                r = K.null_residual(gold, now, align=False)
                 self.assertLess(r["peak_dbfs"], GOLDEN_PEAK_DB[kind],
                                 "%s: residual against the golden (%s) - regenerate only with a changelog line (D.3.5)" % (sc.stem, kind))
 
 
 class DefiningFeatures(Timed):
-    """Rule 13: one presence test per defining feature in the brief. Show each failing
-    on a build without the feature (D.3.8) before trusting it."""
+    """Rule 13: one presence test per defining feature in the brief, each shown failing on a
+    build without the feature (D.3.8; docs/status.md names the build)."""
     label = "render"
 
-    def test_feature_present(self):                                        # TODO
-        self.skipTest("write one test per defining feature in brief.md")
+    def test_removed_display_has_data_and_is_empty_when_off(self):
+        _, _, on = render_file("pink-vocal", {"noiseOn": 1})
+        _, _, off = render_file("pink-vocal", None)
+        self.assertGreater(on["product"]["removed_total"], 0.0)
+        self.assertEqual(off["product"]["removed_total"], 0.0)
+        bands = np.array(on["product"]["removed_bands"])
+        self.assertGreater(int((bands > 0).sum()), 40, "the noise tint covers the whole display")
+
+    def test_click_counter_reports_missed_from_a_second_pass(self):
+        # at Threshold 0 % (40 sigma) the quieter clicks pass the first pass and the honest
+        # second pass, one sigma lower over the output, still finds some of them
+        _, _, res = render_file("clicks", {"clickOn": 1, "clickThreshold": norm("clickThreshold", 0.0)})
+        self.assertGreater(res["product"]["clicks_missed"], 0)
+        self.assertGreater(res["product"]["clicks_caught"], 0)
+
+    def test_attack_hold_keeps_consonants(self):
+        def onset_change(attacks):
+            x, y, res = render_file("room", {"reverbOn": 1, "reverbAmount": norm("reverbAmount", 50.0),
+                                             "reverbTail": norm("reverbTail", 1.2),
+                                             "reverbAttacks": norm("reverbAttacks", attacks)})
+            lat = res["applied"]["latency_samples"]
+            out = y[lat:]
+            worst = 0.0
+            for i in range(4):
+                a = int((0.08 + i * 0.25) * 6.0 * FS)
+                b = a + int(0.020 * FS)
+                worst = max(worst, abs(K.peak_dbfs(x[a:b]) - K.peak_dbfs(out[a:b])))
+            return worst
+        held, unheld = onset_change(60.0), onset_change(0.0)
+        self.assertLessEqual(held, 1.0, "onsets move more than 1 dB at Attacks 60 %")
+        self.assertLess(held, unheld, "Attacks does not protect the onsets")
 
 
-# CTest registration (CMakeLists.txt of the project):
-#   add_test(NAME py-fast   COMMAND ${Python3_EXECUTABLE} tools/tests/test_template.py --label fast)
-#   add_test(NAME py-render COMMAND ${Python3_EXECUTABLE} tools/tests/test_template.py --label render)
-#   set_tests_properties(py-fast PROPERTIES LABELS "fast" TIMEOUT 60 ENVIRONMENT "HARNESS=$<TARGET_FILE:MyPluginHarness>")
-#   set_tests_properties(py-render PROPERTIES LABELS "render" TIMEOUT 600 ENVIRONMENT "HARNESS=$<TARGET_FILE:MyPluginHarness>")
-# Then: ctest -L fast (inner loop), ctest -L render, ctest -LE validation.
+class Targets(Timed):
+    """The brief's quality targets, measured on the port (G3 measured them on the prototype)."""
+    label = "render"
+
+    def test_hum_stack_goes_below_minus_90(self):
+        # the brief's 50 Hz + 8 harmonics at -40 dBFS, alone through the comb at Depth -60 dB;
+        # judged after the tracker's 1 s warm-up and the 2 s lock
+        hum_only, _ = M.add_hum(np.zeros((6 * FS, 2)), FS, f0=50.0, harmonics=8, dbfs=-40.0)
+        with tempfile.TemporaryDirectory() as d:
+            src, out = Path(d) / "hum.wav", Path(d) / "out.wav"
+            K.write_wav(str(src), hum_only.astype(np.float32), FS)
+            run({"humOn": 1, "humDepth": norm("humDepth", -60.0)}, in_=str(src), out=out, seconds=6.0)
+            yh, _ = K.read_wav(str(out))
+        self.assertLess(K.rms_dbfs(yh[3 * FS:]), -90.0)
+
+    def test_clicks_caught_and_snare_left_alone(self):
+        _, _, res = render_file("clicks", {"clickOn": 1, "clickLength": norm("clickLength", 3.5)})
+        self.assertGreaterEqual(res["product"]["clicks_caught"], 95)    # EX-1: 97 on the prototype
+        _, _, sn = render_file("snare", {"clickOn": 1})
+        self.assertEqual(sn["product"]["clicks_caught"], 0)
+
+    def test_noise_reduced_12_db_in_the_gaps(self):
+        x, y, res = render_file("pink-vocal", {"noiseOn": 1})
+        lat = res["applied"]["latency_samples"]
+        out = y[lat:]
+        m = np.zeros(out.shape[0], dtype=bool)
+        for i in range(4):
+            a = int((0.08 + i * 0.25) * 6.0 * FS) + int(0.19 * 6.0 * FS)
+            b = int(min(out.shape[0], (0.08 + (i + 1) * 0.25) * 6.0 * FS) - 0.02 * FS)
+            if b > a:
+                m[a:b] = True
+        red = K.rms_dbfs(x[: out.shape[0]][m]) - K.rms_dbfs(out[m])
+        self.assertAlmostEqual(red, 12.0, delta=1.0)
+
 
 if __name__ == "__main__":
     label = None
@@ -220,7 +369,7 @@ if __name__ == "__main__":
     if label:
         loader = unittest.TestLoader()
         suite = unittest.TestSuite()
-        for cls in (Contract, RateAndBlock, Health, Properties, Goldens, DefiningFeatures):
+        for cls in (Contract, RateAndBlock, Health, Properties, MustDo, Goldens, DefiningFeatures, Targets):
             if cls.label == label:
                 suite.addTests(loader.loadTestsFromTestCase(cls))
         t0 = time.time()
