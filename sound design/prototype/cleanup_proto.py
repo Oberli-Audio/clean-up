@@ -132,6 +132,12 @@ CLICK_RUNAWAY_FACTOR = 4.0              # safety net: an AR extrapolation that e
                                         # in theory; in float it is not always.
 CLICK_CRACKLE_LENGTH_S = 0.0005         # the crackle detector's span clamp
 CLICK_CONTEXT_S = 64.0 / 48000.0        # 1.333 ms of context each side, >= the AR order
+CLICK_STEP_LONG_S = 0.005               # the level-step test's second scale, longer than a sung
+                                        # pitch period: an edge in the music is a step at both
+                                        # scales. At 1.333 ms alone the RMS swung with where a
+                                        # window fell between glottal pulses (-31.0 against
+                                        # -18.6 dBFS around a click in a held note); at 5 ms
+                                        # alone a click 4 ms before a phrase onset read as one
 CLICK_XFADE_S = 8.0 / 48000.0           # 0.167 ms raised-cosine seam at each edge
 CLICK_LOOKAHEAD_S = 0.012               # >= the longest span (10 ms) + the context (1.33 ms)
 CLICK_MISSED_SIGMA_MARGIN = 1.0         # the honest counter: the second pass is 1 sigma lower
@@ -551,6 +557,7 @@ class ClickRepair:
                                 int(round(CLICK_REPAIR_BURG_BLOCK_S * fs)))
         self.history = max(self.burg_block, self.repair_block)
         self.context = max(CLICK_AR_ORDER, int(round(CLICK_CONTEXT_S * fs)))
+        self.step_long = max(self.context, int(round(CLICK_STEP_LONG_S * fs)))
         self.xfade = max(1, int(round(CLICK_XFADE_S * fs)))
         self.merge = max(1, int(round(CLICK_MERGE_S * fs)))
         self.extend_max = max(1, int(round(CLICK_EXTEND_MAX_S * fs)))
@@ -581,8 +588,13 @@ class ClickRepair:
 
     def _is_level_step(self, mono, start, length):
         """True when the span is an edge in the music rather than a click: the context RMS
-        on the two sides differs by more than CLICK_MAX_STEP_DB."""
-        c = self.context
+        on the two sides differs by more than CLICK_MAX_STEP_DB at the AR context's scale
+        *and* at CLICK_STEP_LONG_S."""
+        return (self._step_at(mono, start, length, self.context)
+                and self._step_at(mono, start, length, self.step_long))
+
+    @staticmethod
+    def _step_at(mono, start, length, c):
         if start < c or start + length + c > mono.size:
             return True
         left = mono[start - c:start]
@@ -1354,6 +1366,36 @@ def selftest():
     resid = float(db(np.sqrt(np.mean((yc[sl] - xc[sl]) ** 2))))
     check("click repair covers the whole click (hysteresis)", resid <= -25.0,
           "residual %.1f dBFS over a 1.8 ms burst at 0.35" % resid)
+
+    # 13. Click defect found at G3: the level-step test read pitch-pulse ripple as an edge. In
+    # the vocal in a 1.0 s room, 0.75 % of positions read a > 12 dB step at 1.333 ms and none
+    # at 5 ms; a click put on each of them (up to eight, 0.6 s apart) must be repaired.
+    import material as _mat
+    rv = _mat.convolve_room(_mat.vocal(48000.0, 6.0), _mat.reverb_ir(48000.0, rt60=1.0,
+                                                                     drr_db=3.0, seed=7))
+    mono_rv = rv.mean(axis=1)
+
+    def rms_db(a):
+        return float(db(max(float(np.sqrt(np.mean(a * a))), 1.0e-4)))
+
+    def only_short(st, ln):
+        d = [abs(rms_db(mono_rv[st + ln:st + ln + c]) - rms_db(mono_rv[st - c:st]))
+             for c in (64, 240)]
+        return d[0] > 12.0 and d[1] <= 12.0
+
+    cl, spots, st = 57, [], int(0.6 * 48000)
+    while st < int(5.8 * 48000) and len(spots) < 8:
+        if only_short(st, cl):
+            spots.append(st)
+            st += int(0.6 * 48000)
+        st += 3
+    xs = rv.copy()
+    for st in spots:
+        xs[st:st + cl] += (rng.choice([-1.0, 1.0], size=cl) * 0.35 * np.hanning(cl))[:, None]
+    _, cus = render(xs, Params(clickOn=True), fs=48000.0, block=512)
+    got = sum(any(d < st + cl and d + dl > st for d, dl in cus.click.log) for st in spots)
+    check("clicks in a sung note are not taken for edges (level step at two scales)",
+          len(spots) >= 6 and got == len(spots), "%d of %d caught" % (got, len(spots)))
 
     print("\n" + ("selftest: all good" if ok else "selftest: FAILURES above"))
     return 0 if ok else 1

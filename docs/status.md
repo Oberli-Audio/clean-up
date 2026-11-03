@@ -1,6 +1,7 @@
 # Status - Clean Up 0.1.0 (2026-11-03)
-Tier P, track E, at gate G3 (open: every row measured, 36 of 38 pass; Reverb's T60 needs a
-design decision, below; the reference renders are waiting to be heard). Recipe D.8.1.
+Tier P, track E, at gate G3 (open: every row measured, 37 of 38 pass; Reverb's T60 needs a
+design decision, below; the reference renders are waiting to be heard). G4 runs meanwhile for
+Hum, Click and Noise, whose rows pass. Recipe D.8.1.
 
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
@@ -76,7 +77,7 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 | G0 | closed 2026-11-01 | `docs/brief.md` owner-confirmed, from `docs/sketch.md` |
 | G1 | closed 2026-11-01 | see Decisions: four families, four departures, each with the measurement that rejects it |
 | G2 | closed 2026-11-01 | `python3 "sound design/prototype/cleanup_proto.py" --selftest` -> 17 checks, all green (Burg against a known AR(2), the bell against its own biquad, all-off bit-exact, WOLA passthrough, latency = frame + lookahead, bypass a delayed wire, two runs bit-identical, block size irrelevant, finite at all six rates, Output + Removed = Input) |
-| G3 | **open** | per target below; `python3 "sound design/prototype/measure.py" --all` -> 38 measurements, 2 fail (2026-11-03) |
+| G3 | **open** | per target below; `python3 "sound design/prototype/measure.py" --all` -> 38 measurements, 1 fail (Reverb T60, 2026-11-03) |
 | G4 | - | |
 | G5 | - | |
 | G6 | - | |
@@ -112,7 +113,7 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 | Estimate measures the tail | 1.60 s (1.2 +/- 0.4) | pass |
 | all four: finite, no clip | -7.5 dBFS peak | pass |
 | all four adds no step outside the clicks (vs the clean room) | -3.4 dB | pass |
-| all four: clicks caught in a room with hum and noise | **28 of 30** (>= 29 asked, as EX-1) | **fail, open** |
+| all four: clicks caught in a room with hum and noise | 29 of 30 (2026-11-03; was 28) | pass |
 | Removed display has data / is empty when off | 33.7 dB / 0 | pass |
 
 ## Listening debt
@@ -137,8 +138,8 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 ## Handoff
 Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
 Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - every row run
-(`measure.py --all`: 38 measurements, 2 fail); open: Reverb's T60 (Waiting for Björn), the
-all-four recall (28 of 30), the listening checkpoint 4. [ ] G4 C++ port 5. [ ] harness hooks
+(`measure.py --all`: 38 measurements, 1 fail); open: Reverb's T60 (Waiting for Björn) and the
+listening checkpoint 4. [ ] G4 C++ port 5. [ ] harness hooks
 and tests 6. [ ] G5 null 7. [ ] G6 validate 8. [ ] G7 bank and documents.
 Machine: from 2026-11-02 Björn's Mac (Claude Code in VS Code), on `main`. `Source/oberli/` is
 refreshed from plugin-template 0e7d4f4 (`refresh_oberli.py --accent "#33B679"`); the editor is
@@ -146,7 +147,7 @@ wired to it at G4, with plugin-ui-bob.
 Build: `cmake --preset release && cmake --build --preset release` is red on purpose, only in
 `Source/PluginProcessor.cpp` (the template processor still references `Params::outGain` and
 `Params::mix`, which the real `parameters.csv` does not have; the processor is rewritten at G4).
-Tests: the prototype selftest is green, 20 checks
+Tests: the prototype selftest is green, 21 checks
 (`python3 "sound design/prototype/cleanup_proto.py" --selftest`); `ctest --preset fast` runs the
 four shared tests (oberli_build_tests, oberli_loudness, oberli_shared, oberli_copy), all pass;
 the product suite registers once the harness builds. On this Mac CMake finds Homebrew's
@@ -358,12 +359,21 @@ The click battery: 97 of 100 still caught (EX-1 unchanged), median residual -35.
 Regression: selftest `click repair covers the whole click (hysteresis)` (-16.5 dBFS on the
 commit before, -38.5 after); `docs/failures.md`.
 
-Open lead, not changed: the level-step test reads its 1.333 ms context windows against a 12 dB
-limit, and 1.333 ms is shorter than a sung pitch period (3.7-5.5 ms here), so its RMS swings
-with where a window falls between glottal pulses (-31.0 against -18.6 dBFS around the click at
-5.44 s in the all-four run). 5 ms windows caught that click and missed one straddling the first
-phrase onset instead - the same count, 28 of 30 - so the change is not in; it comes back with a
-test that shows it.
+**The level-step test read pitch-pulse ripple as an edge** (fixed 2026-11-03, the same day).
+Its 1.333 ms windows are shorter than a sung pitch period (3.7-5.5 ms here), so in the vocal in
+a 1.0 s room 0.75 % of positions read a > 12 dB step at 1.333 ms and none at 5 ms; the click at
+5.44 s of the all-four run sat on one (-31.0 against -18.6 dBFS). 5 ms windows alone caught it
+and missed a click 4 ms before a phrase onset instead, because the right window reached into
+the onset. An edge in the music is a step at every scale, a pulse ripple only at the short one
+and a nearby onset only at the long one, so the test now calls it an edge only when both
+1.333 ms and `CLICK_STEP_LONG_S` (5 ms) agree. All-four: 29 of 30 (was 28); the battery, the
+snare (0) and the clean vocal (3) are unchanged. Regression: selftest `clicks in a sung note
+are not taken for edges (level step at two scales)` (5 of 7 on the commit before, 7 of 7).
+
+**The one left, at 5.13 s, is below the default sensitivity, not a defect.** It sits in a loud
+passage (local peak 0.28): the prediction error's sigma there is 0.0215, 21 sigma is 0.457, and
+the click's own largest error is 0.384. Threshold 70 % (16 sigma) catches it - all 30, with one
+repair on the clean room vocal (`clk3` sweep, 2026-11-03) - which is what the knob is for.
 
 ### 2026-11-03 G3, the all-four measurement was measuring the wrong thing
 Two measurement defects, fixed in `measure.py all-four`, not in the plugin:
