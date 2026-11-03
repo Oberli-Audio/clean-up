@@ -209,6 +209,22 @@ class Properties(Timed):
             xb, _ = K.read_wav(d / "b.wav")
             self.assertTrue((xa == xb).all())
 
+    def test_learned_profile_is_plugin_state(self):                        # parameters.csv: "Profile is plugin state"
+        learned = {"noiseOn": 1, "noiseMode": norm("noiseMode", 0)}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            src = wav("noise-lead")
+            run(learned, in_=src, seconds=seconds_of(src), learn_at=0.1, state_out=d / "a.state")
+            self.assertIn(b"NoiseProfile", (d / "a.state").read_bytes(), "the Learned profile is not saved")
+            # a new instance, the state loaded, no Learn: the profile is there and does its work
+            res = run(learned, in_=wav("pink-vocal"), seconds=6.0, state_in=d / "a.state", state_out=d / "b.state")
+            self.assertTrue(res["product"]["noise_profile_captured"], "the saved profile did not load")
+            self.assertEqual((d / "a.state").read_bytes(), (d / "b.state").read_bytes(), "load and save changed it")
+            # at another rate it is mapped onto that rate's bins
+            res96 = run(learned, signal="noise:pink:-50", sample_rate=96000, seconds=1.0, state_in=d / "a.state")
+            self.assertTrue(res96["product"]["noise_profile_captured"])
+            self.assertEqual(res96["health"]["nan"] + res96["health"]["inf"], 0)
+
     def test_corrupted_state_does_not_crash(self):                         # D.5.3, fuzz
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)

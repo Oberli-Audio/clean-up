@@ -58,7 +58,21 @@ CleanUpAudioProcessor::~CleanUpAudioProcessor()
 void CleanUpAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
+    // a second prepare resets the engine: keep a profile Learn captured, and re-apply it
+    {
+        std::vector<float> v;
+        double rate = 0.0;
+        int frameLen = 0;
+        if (dsp.snapshotProfile (v, rate, frameLen))
+        {
+            loadedProfile = std::move (v);
+            loadedProfileRate = rate;
+            loadedProfileFrame = frameLen;
+        }
+    }
     dsp.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
+    if (! loadedProfile.empty())
+        dsp.loadProfile (loadedProfile, loadedProfileRate, loadedProfileFrame);
     for (auto& s : smoothed)
         s.value.reset (sampleRate, (double) tauMsOf (s.id) * 4.6 / 1000.0);
     snapSmoothers.store (true);
@@ -185,7 +199,27 @@ juce::AudioProcessorEditor* CleanUpAudioProcessor::createEditor()
 
 void CleanUpAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    copyXmlToBinary (*cleanup::State::toXml (apvts), destData);
+    auto xml = cleanup::State::toXml (apvts);
+    // the Learned noise profile is plugin state (parameters.csv, noiseMode): <Extra>, base64
+    // float32 little-endian, with the rate and frame it was captured at
+    std::vector<float> v;
+    double rate = 0.0;
+    int frameLen = 0;
+    if (! dsp.snapshotProfile (v, rate, frameLen))
+    {
+        v = loadedProfile;
+        rate = loadedProfileRate;
+        frameLen = loadedProfileFrame;
+    }
+    if (! v.empty())
+        if (auto* extra = xml->getChildByName ("Extra"))
+        {
+            auto* e = extra->createNewChildElement ("NoiseProfile");
+            e->setAttribute ("sampleRate", rate);
+            e->setAttribute ("frame", frameLen);
+            e->addTextElement (juce::MemoryBlock (v.data(), v.size() * sizeof (float)).toBase64Encoding());
+        }
+    copyXmlToBinary (*xml, destData);
 }
 
 void CleanUpAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -203,9 +237,37 @@ bool CleanUpAudioProcessor::loadState (const void* data, int sizeInBytes)
         return false;
     auto* state = cleanup::State::stateOf (*xml);
     const bool ok = state != nullptr && cleanup::State::fromXml (*state, apvts);
-    if (ok)
-        snapSmoothers.store (true);
-    return ok;
+    if (! ok)
+        return false;
+    snapSmoothers.store (true);
+    // the Learned noise profile, when the state has a well-formed one
+    loadedProfile.clear();
+    if (auto* extra = state->getChildByName ("Extra"))
+        if (auto* e = extra->getChildByName ("NoiseProfile"))
+        {
+            juce::MemoryBlock bytes;
+            const double rate = e->getDoubleAttribute ("sampleRate", 0.0);
+            const int frameLen = e->getIntAttribute ("frame", 0);
+            if (bytes.fromBase64Encoding (e->getAllSubText().trim()) && rate > 0.0 && frameLen > 0
+                && bytes.getSize() == (size_t) (frameLen / 2 + 1) * sizeof (float))
+            {
+                loadedProfile.resize (bytes.getSize() / sizeof (float));
+                std::memcpy (loadedProfile.data(), bytes.getData(), bytes.getSize());
+                bool finite = true;
+                for (float f : loadedProfile)
+                    finite = finite && std::isfinite (f) && f >= 0.0f;
+                if (finite)
+                {
+                    loadedProfileRate = rate;
+                    loadedProfileFrame = frameLen;
+                    if (dsp.prepared())
+                        dsp.loadProfile (loadedProfile, rate, frameLen);
+                }
+                else
+                    loadedProfile.clear();
+            }
+        }
+    return true;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

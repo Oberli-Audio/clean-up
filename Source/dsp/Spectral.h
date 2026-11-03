@@ -99,6 +99,7 @@ public:
                 for (int i = 0; i < bins; ++i)
                     profile[(size_t) i] = (float) (learnAcc[(size_t) i] / learnFrames);
                 hasProfile = true;
+                ++profileVersion;
             }
         }
         minstat (power);                      // always tracking, so Adaptive is instant
@@ -142,7 +143,11 @@ public:
         if (n != bins) return;
         std::copy (values, values + n, profile.begin());
         hasProfile = true;
+        ++profileVersion;
     }
+    /** Bumped whenever the profile changes (Learn, or a loaded state); the engine publishes it. */
+    int profileVersionNow() const noexcept { return profileVersion; }
+    int binCount() const noexcept { return bins; }
     const std::vector<float>& capturedProfile() const noexcept { return profile; }
 
 private:
@@ -196,7 +201,7 @@ private:
 
     double fs = 48000.0, winEnergy = 1.0, learnPeak = 0.0;
     int frame = 2048, hop = 512, bins = 1025, subFrames = 1, warmFrames = 1, warmCount = 0;
-    int ringAt = 0, subCount = 0, learnLeft = 0, learnFrames = 0;
+    int ringAt = 0, subCount = 0, learnLeft = 0, learnFrames = 0, profileVersion = 0;
     float smoothA = 0.0f, bias = 1.0f;
     bool smoothPrimed = false, hasProfile = false;
     std::vector<float> subMin, ring, lam, lamWork, powSmooth, gammaPrev, gain, profile;

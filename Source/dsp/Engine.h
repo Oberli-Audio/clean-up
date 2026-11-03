@@ -46,6 +46,15 @@ public:
     /** Learn starts at the next hop (an editor action; brief: one second of noise only). */
     void requestLearn() noexcept { learnRequested.store (true, std::memory_order_release); }
 
+    /** The Learned noise profile, which is plugin state. Message thread only: copies the
+        profile the audio thread last published (a sequence lock; false when there is none). */
+    bool snapshotProfile (std::vector<float>& values, double& rate, int& frameLen) const;
+    /** Message thread only, after prepare(): hands a profile captured at `rate` with a frame of
+        `frameLen` to the audio thread, mapped by frequency to this rate's bins (picked up at the
+        next hop). */
+    void loadProfile (const std::vector<float>& values, double rate, int frameLen);
+    bool prepared() const noexcept { return isPrepared; }
+
     // the readouts
     const ClickRepair& clickStage() const noexcept { return click; }
     const NoiseWiener& noiseStage() const noexcept { return noise; }
@@ -101,5 +110,15 @@ private:
     int trimLeft = 0, trimSteps = 1;
     std::int64_t fed = 0;
     std::atomic<bool> learnRequested { false };
+
+    // the profile between the threads: the mailbox (message -> audio) and the published copy
+    // (audio -> message, a sequence lock: odd while the audio thread writes)
+    void publishProfile() noexcept;
+    std::vector<float> profileMailbox, profilePublished;
+    std::atomic<int> mailboxFull { 0 };
+    std::atomic<unsigned> publishedSeq { 0 };
+    std::atomic<bool> publishedValid { false };
+    int publishedVersion = 0;
+    bool isPrepared = false;
 };
 } // namespace cleanup

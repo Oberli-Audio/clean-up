@@ -76,7 +76,63 @@ void Engine::prepare (double sampleRate, int maxBlock)
     dryR.assign ((size_t) dryCap, 0.0);
     for (auto* v : { &xL, &xR, &humL, &humR, &alignedL, &alignedR })
         v->assign ((size_t) maxChunk, 0.0);
+    profileMailbox.assign ((size_t) bins, 0.0f);
+    profilePublished.assign ((size_t) bins, 0.0f);
+    mailboxFull.store (0);
+    publishedValid.store (false);
+    publishedVersion = 0;
     reset();
+    isPrepared = true;
+}
+
+void Engine::publishProfile() noexcept
+{
+    const auto& prof = noise.capturedProfile();
+    publishedSeq.fetch_add (1, std::memory_order_acq_rel);          // odd: writing
+    std::copy (prof.begin(), prof.end(), profilePublished.begin());
+    publishedValid.store (true, std::memory_order_relaxed);
+    publishedSeq.fetch_add (1, std::memory_order_acq_rel);          // even: done
+}
+
+bool Engine::snapshotProfile (std::vector<float>& values, double& rate, int& frameLen) const
+{
+    if (! isPrepared)
+        return false;
+    for (int attempt = 0; attempt < 64; ++attempt)
+    {
+        const unsigned s1 = publishedSeq.load (std::memory_order_acquire);
+        if ((s1 & 1u) != 0)
+            continue;
+        if (! publishedValid.load (std::memory_order_relaxed))
+            return false;
+        values.assign (profilePublished.begin(), profilePublished.end());
+        if (publishedSeq.load (std::memory_order_acquire) == s1)
+        {
+            rate = fs;
+            frameLen = frame;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Engine::loadProfile (const std::vector<float>& values, double rate, int frameLen)
+{
+    if (! isPrepared || values.empty() || rate <= 0.0 || frameLen <= 0 || mailboxFull.load() != 0)
+        return;
+    // by frequency onto this rate's bins; the bin power of a stationary noise scales with the
+    // frame length (the periodic Hann's energy is 3N/8), so a longer frame reads more per bin
+    const int srcBins = (int) values.size();
+    const double scale = (double) frame / frameLen;
+    for (int kk = 0; kk < bins; ++kk)
+    {
+        const double pos = ((double) kk * fs / frame) * frameLen / rate;
+        const int i0 = std::min (std::max ((int) std::floor (pos), 0), srcBins - 1);
+        const int i1 = std::min (i0 + 1, srcBins - 1);
+        const double t = std::min (std::max (pos - i0, 0.0), 1.0);
+        profileMailbox[(size_t) kk] = (float) (scale * ((1.0 - t) * values[(size_t) i0] + t * values[(size_t) i1]));
+    }
+    mailboxFull.store (1, std::memory_order_release);
 }
 
 void Engine::reset() noexcept
@@ -151,6 +207,11 @@ void Engine::hopStep (const double* chunkL, const double* chunkR, double* emitL,
     }
     if (learnRequested.exchange (false, std::memory_order_acq_rel))
         noise.startLearn();
+    if (mailboxFull.load (std::memory_order_acquire) == 1)
+    {
+        noise.setProfile (profileMailbox.data(), bins);
+        mailboxFull.store (0, std::memory_order_release);
+    }
 
     for (int i = 0; i < frame; ++i)
     {
@@ -169,6 +230,11 @@ void Engine::hopStep (const double* chunkL, const double* chunkR, double* emitL,
         before[(size_t) kk] = (double) power[(size_t) kk];
     }
     const float* gn = noise.gainFor (power.data(), p);
+    if (noise.profileVersionNow() != publishedVersion)
+    {
+        publishedVersion = noise.profileVersionNow();
+        publishProfile();
+    }
     for (int kk = 0; kk < bins; ++kk)
         power2[(size_t) kk] = power[(size_t) kk] * gn[kk] * gn[kk];
     const float* gr = reverb.gainFor (power2.data(), p);

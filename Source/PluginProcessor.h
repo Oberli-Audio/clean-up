@@ -101,6 +101,11 @@ private:
     std::atomic<float>* bypassP = nullptr;
 
     cleanup::Engine dsp;
+    // the Learned noise profile as the last state load brought it (message thread): applied at
+    // every prepare, and saved again until the engine has published one of its own
+    std::vector<float> loadedProfile;
+    double loadedProfileRate = 0.0;
+    int loadedProfileFrame = 0;
     std::atomic<bool> snapSmoothers { true };
     double currentSampleRate = 48000.0;
     std::atomic<float> rmsL { 0.0f }, rmsR { 0.0f };

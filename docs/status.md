@@ -165,7 +165,8 @@ python3.12 first, which has no numpy: configure with
 Open questions for the owner: the Waiting for Björn section above.
 Next command, to resume exactly where this stopped:
 the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: the G4 open
-items below (the Learned profile in the state next), each with its test.
+items below (Find and Estimate in the plugin wait for the editor's capture ring), and the
+G6 preparation that needs no editor (pluginval, the Steinberg validator, the rtsan preset).
 `ctest --preset fast` (9 tests) and `ctest --test-dir build -L render` are green.
 
 ## Decisions
@@ -448,8 +449,14 @@ hidden until the processor compiled); added as the snapshot and test targets hav
   each switch read -2.6 dB on `max_click_db` and now reads -43.7 dB, the sine's own step.
   Tests: selftest `switching Hum off / Listen to Removed / Bypass on is click-free` (all three
   -2.6 dB on the commit before) and `test_switches_are_click_free` in the fast suite.
-- **The Learned noise profile is not in the plugin state yet** (`parameters.csv`: "Profile is
-  plugin state"): `State.h` `<Extra>`, with a round-trip test.
+- ~~The Learned noise profile in the plugin state~~ done 2026-11-03: `<Extra><NoiseProfile
+  sampleRate frame>` (base64 float32), not in presets. The audio thread publishes a captured
+  profile under a sequence lock and takes a loaded one from a preallocated mailbox at the next
+  hop (nothing allocates there); a profile from another rate is mapped by frequency and scaled
+  by the frame length (the periodic Hann's energy is 3N/8); a second `prepareToPlay` keeps it.
+  Test `test_learned_profile_is_plugin_state` (fast): saved after Learn, loaded into a new
+  instance and working, byte-identical on load-and-save, mapped at 96 kHz; on the commit
+  before it fails ("the Learned profile is not saved").
 - **Find and Estimate in the plugin** need the last 4 s of input: the shared `Analysis`
   `AudioCopy` ring, wired with the editor (plugin-ui-bob); the harness runs them on `--in`.
 - **The editor** is still the template stub; `Source/oberli/` is in and waits for plugin-ui-bob.
