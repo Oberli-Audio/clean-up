@@ -187,7 +187,12 @@ if (PRODUCT_RELEASE_SYMBOLS)
                 add_custom_command(TARGET CleanUp_${format} POST_BUILD
                     COMMAND dsymutil "$<TARGET_FILE:CleanUp_${format}>" -o "$<TARGET_BUNDLE_DIR:CleanUp_${format}>.dSYM"
                     COMMAND strip -x "$<TARGET_FILE:CleanUp_${format}>"
-                    COMMENT "dSYM and strip: ${format}"
+                    # strip invalidates JUCE's ad-hoc signature, and Apple Silicon kills a process
+                    # that loads an arm64 slice with a broken one (the validator: exit -9). Sign
+                    # again, as ship-bob macos-signing.md orders it; the release re-signs anyway.
+                    COMMAND xattr -cr "$<TARGET_BUNDLE_DIR:CleanUp_${format}>"
+                    COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:CleanUp_${format}>"
+                    COMMENT "dSYM, strip and ad-hoc signature: ${format}"
                     VERBATIM)
             endif()
         endforeach()

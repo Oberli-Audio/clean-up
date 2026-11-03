@@ -6,14 +6,19 @@ module, the reverb as it stands. Recipe D.8.1.
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
 
-- 2026-11-03 **Four template bugs in the harness and the build, fixed here, to go upstream**
+- 2026-11-03 **Six template bugs in the harness and the build, fixed here, to go upstream**
   (plugin-template is generated in bob-skills, which this repo never edits - skills-bob
   work): the harness target lacked `JucePlugin_Name` / `JucePlugin_VersionString`; it echoed
   `sample_rate` as `48000.0`, which `dspkit.assert_echo` (a string compare) refuses; it sized
   its work buffer to `--max-block` and handed the plugin a larger block inside it (a 768-sample
   overrun in `test_block_larger_than_announced`); and `--list-params` reported 0 steps for an
   `AudioParameterInt` (JUCE's `isDiscrete()` is false for it). Also `test_template.py`'s
-  `BLOCKS` holds 0, which the template harness refuses.
+  `BLOCKS` holds 0, which the template harness refuses. And two in the plugin target: the
+  release preset's post-build `strip -x` runs after JUCE's ad-hoc signature and never signs
+  again, so the local arm64 bundle has an invalid signature and macOS kills whatever loads it
+  (the Steinberg validator: exit -9); and `getProgramName` returns an empty string, which the
+  validator fails ("Program 000 has no name"). Fixed here: `xattr -cr` and
+  `codesign --force --sign -` after the strip (ship-bob macos-signing.md's order), and "Init".
 - 2026-11-03 **Listening checkpoint: the reference renders are written.** `python3 "sound
   design/prototype/measure.py" renders` -> `sound design/renders/` (gitignored, to the bit from
   the seeds). A/B `<module>-in.wav` against `-out.wav`, and listen to `-removed.wav` alone:
