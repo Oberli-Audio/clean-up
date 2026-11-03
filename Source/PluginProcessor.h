@@ -8,22 +8,26 @@
 #include <cstring>
 
 #include "Params.h"
+#include "dsp/Engine.h"
 
 /*  Clean Up - the processor.
 
     Thread model (sound-design-bob rule 1, D.1): the audio thread reads parameters through cached
-    atomics, never by string lookup; nothing on the audio thread allocates, locks or logs; every
-    parameter that reaches the audio path is smoothed with the table's tau (Params::smoothing).
-    State is State.h's format. The editor reads what the processor publishes as atomics only.
+    atomics, never by string lookup; nothing on the audio thread allocates, locks or logs. The
+    continuous parameters are smoothed at block rate with the table's tau (Params::smoothing),
+    as linear ramps so a parameter that does not move is exactly its value (G5 nulls the
+    engine against the prototype); Trim is smoothed per sample. The switches go to the engine
+    as they are; their crossfades are an open G4 item (docs/status.md).
 
-    This is the template's skeleton: effect with the parameters of parameters.csv (outGain and,
-    for an effect, bypass and mix). sound-design-bob replaces the DSP at G4 behind the same
-    contract; plugin-ui-bob replaces the editor at G2. Keep the lifecycle calls as they are. */
-class CleanUpAudioProcessor final : public juce::AudioProcessor
+    The DSP is cleanup::Engine (Source/dsp/), the hand port of the G2 prototype. Its latency
+    (0, or frame + lookahead once Click, Noise or Reverb is on) is published from the message
+    thread by a timer, never from processBlock (rule 1). */
+class CleanUpAudioProcessor final : public juce::AudioProcessor,
+                                    private juce::Timer
 {
 public:
     CleanUpAudioProcessor();
-    ~CleanUpAudioProcessor() override = default;
+    ~CleanUpAudioProcessor() override;
 
     // AudioProcessor
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -36,10 +40,10 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return PRODUCT_IS_INSTRUMENT != 0; }
+    bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override;
+    double getTailLengthSeconds() const override { return 0.0; }
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
     int getNumPrograms() override { return 1; }
@@ -61,35 +65,44 @@ public:
     /** What the editor may read from the audio thread: the 20 ms RMS per channel (D.6.2). */
     float outputLevel (int channel) const noexcept { return channel == 0 ? rmsL.load (std::memory_order_relaxed) : rmsR.load (std::memory_order_relaxed); }
 
+    /** Publishes the latency the parameters imply (message thread; the timer calls it, the
+        harness calls it after applying its flags). */
+    void refreshLatency();
+
+    /** The engine, for the editor's readouts and actions and for the harness. */
+    cleanup::Engine& engine() noexcept { return dsp; }
+
 private:
+    void timerCallback() override { refreshLatency(); }
+    void render (juce::AudioBuffer<float>& buffer, bool forceBypass) noexcept;
+    cleanup::EngineParams readParams (int numSamples) noexcept;
+
     juce::AudioProcessorValueTreeState apvts;
 
-    // cached parameter pointers (never string lookups on the audio thread)
-    std::atomic<float>* outGainParam = nullptr;
-#if ! PRODUCT_IS_INSTRUMENT
-    std::atomic<float>* mixParam = nullptr;
-    std::atomic<float>* bypassParam = nullptr;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmoothed;
-    juce::AudioBuffer<float> dryBuffer;
-#else
-    // the skeleton instrument: a tiny polyphonic sine with an ADSR, replaced at G4
-    struct Voice
+    struct Smoothed
     {
-        int note = -1;
-        float phase = 0.0f, increment = 0.0f, velocity = 0.0f;
-        juce::ADSR env;
-        bool active() const noexcept { return note >= 0; }
+        const char* id = nullptr;
+        std::atomic<float>* raw = nullptr;
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> value;
     };
-    static constexpr int kMaxVoices = 8;
-    std::array<Voice, kMaxVoices> voices;
-    bool sustainDown = false;
-    float pitchBendSemitones = 0.0f;   // from the wheel, +/- 2 st
-    float modWheel = 0.0f;
-    void noteOn (int note, float velocity);
-    void noteOff (int note);
-    void renderVoices (juce::AudioBuffer<float>& out, int start, int numSamples);
-#endif
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gainSmoothed;
+    enum SmoothedIndex { sHumDepth, sHumWidth, sHumFreq, sClickThreshold, sClickLength, sClickCrackle,
+                         sNoiseReduction, sNoiseSmooth, sNoiseFloor, sReverbAmount, sReverbTail, sReverbAttacks,
+                         kNumSmoothed };
+    std::array<Smoothed, kNumSmoothed> smoothed;
+    std::atomic<float>* humOnP = nullptr;
+    std::atomic<float>* humHarmonicsP = nullptr;
+    std::atomic<float>* clickOnP = nullptr;
+    std::atomic<float>* clickModeP = nullptr;
+    std::atomic<float>* noiseOnP = nullptr;
+    std::atomic<float>* noiseModeP = nullptr;
+    std::atomic<float>* reverbOnP = nullptr;
+    std::atomic<float>* listenP = nullptr;
+    std::atomic<float>* trimP = nullptr;
+    std::atomic<float>* bypassP = nullptr;
+
+    cleanup::Engine dsp;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> trimSmoothed;
+    std::atomic<bool> snapSmoothers { true };
     double currentSampleRate = 48000.0;
     std::atomic<float> rmsL { 0.0f }, rmsR { 0.0f };
     juce::dsp::BallisticsFilter<float> rmsFilterL, rmsFilterR;

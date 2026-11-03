@@ -1,7 +1,7 @@
 # Status - Clean Up 0.1.0 (2026-11-03)
-Tier P, track E, at gate G3 (open: every row measured, 37 of 38 pass; Reverb's T60 needs a
-design decision, below; the reference renders are waiting to be heard). G4 runs meanwhile for
-Hum, Click and Noise, whose rows pass. Recipe D.8.1.
+Tier P, track E. G3 open (37 of 38: Reverb's T60 needs a design decision, below; the renders
+wait to be heard). G4 in progress: the C++ port builds and renders; G5's null passes for every
+module, the reverb as it stands. Recipe D.8.1.
 
 ## Waiting for Björn
 Newest first, one line each. Everything else below is unblocked and in progress.
@@ -78,8 +78,8 @@ Newest first, one line each. Everything else below is unblocked and in progress.
 | G1 | closed 2026-11-01 | see Decisions: four families, four departures, each with the measurement that rejects it |
 | G2 | closed 2026-11-01 | `python3 "sound design/prototype/cleanup_proto.py" --selftest` -> 17 checks, all green (Burg against a known AR(2), the bell against its own biquad, all-off bit-exact, WOLA passthrough, latency = frame + lookahead, bypass a delayed wire, two runs bit-identical, block size irrelevant, finite at all six rates, Output + Removed = Input) |
 | G3 | **open** | per target below; `python3 "sound design/prototype/measure.py" --all` -> 38 measurements, 1 fail (Reverb T60, 2026-11-03) |
-| G4 | - | |
-| G5 | - | |
+| G4 | **in progress** | `cmake --build --preset release` -> VST3, Standalone and CleanUpHarness build; `Source/dsp/` is the hand port, every constant under its prototype name (`Source/dsp/Constants.h`). Harness, all four on, random blocks 0-4096, 44.1 / 48 / 192 kHz: finite, 0 clipped, the malloc trap armed (its self-test aborts) and silent. Open items below |
+| G5 | **null passes** (2026-11-03) | `python3 "sound design/prototype/g5_null.py"` -> peak residual, no alignment: hum -151.9, click -138.5, click on the clean vocal -142.6, noise -144.5, reverb -123.1, all four -141.0 dBFS; latency and every click repair identical. Targets F.8: hum < -120, spectral < -90. Re-run after the Reverb decision |
 | G6 | - | |
 | G7 | - | |
 
@@ -99,7 +99,8 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 | Depth 0 dB bypasses the comb | -300.0 dBFS | pass |
 | Find measures the mains frequency | 50.00 Hz | pass |
 | 100 clicks 0.5-3 ms all caught at Threshold 55 % | **97 of 100** | EX-1 |
-| (2026-11-03) per-click repair: median residual / improvement | -35.5 dBFS / 23.6 dB (was -31.7 / 18.8) | pass |
+| (2026-11-03) per-click repair: median residual / improvement | -37.9 dBFS / 25.8 dB (was -31.7 / 18.8) | pass |
+| (2026-11-03) clean vocal: residual of the 3 false repairs | -40.2 dBFS (target <= -40) | pass |
 | 0 false repairs on a snare at Threshold 55 % | **0** | pass |
 | a clean vocal is left alone | 3 repairs, residual -42.3 dBFS | pass |
 | -50 dBFS pink reduced 12 +/- 1 dB in the gaps | 11.56 dB (2026-11-02; was 7.3) | pass |
@@ -139,15 +140,16 @@ Every row is one `measure.py` subcommand; the seed and the material are in its o
 Task: build Clean Up from G1 to G7, Tier P, stopping before the release.
 Plan: 1. [x] G1 decisions 2. [x] G2 numpy prototype 3. [~] G3 measure - every row run
 (`measure.py --all`: 38 measurements, 1 fail); open: Reverb's T60 (Waiting for Björn) and the
-listening checkpoint 4. [ ] G4 C++ port 5. [ ] harness hooks
-and tests 6. [ ] G5 null 7. [ ] G6 validate 8. [ ] G7 bank and documents.
+listening checkpoint 4. [~] G4 C++ port - builds, renders, nulls; open: the items under
+"G4 open items" in Decisions 5. [ ] harness tests (`tools/tests/test_plugin.py` is still the
+template scaffold) 6. [~] G5 null - passes, re-run after Reverb 7. [ ] G6 validate 8. [ ] G7.
 Machine: from 2026-11-02 Björn's Mac (Claude Code in VS Code), on `main`. `Source/oberli/` is
 refreshed from plugin-template 0e7d4f4 (`refresh_oberli.py --accent "#33B679"`); the editor is
 wired to it at G4, with plugin-ui-bob.
 Build: `cmake --preset release && cmake --build --preset release` is red on purpose, only in
 `Source/PluginProcessor.cpp` (the template processor still references `Params::outGain` and
 `Params::mix`, which the real `parameters.csv` does not have; the processor is rewritten at G4).
-Tests: the prototype selftest is green, 21 checks
+Tests: the prototype selftest is green, 23 checks
 (`python3 "sound design/prototype/cleanup_proto.py" --selftest`); `ctest --preset fast` runs the
 four shared tests (oberli_build_tests, oberli_loudness, oberli_shared, oberli_copy), all pass;
 the product suite registers once the harness builds. On this Mac CMake finds Homebrew's
@@ -155,9 +157,9 @@ python3.12 first, which has no numpy: configure with
 `cmake --preset release -DPython3_EXECUTABLE=/usr/bin/python3` (the build cache keeps it).
 Open questions for the owner: the Waiting for Björn section above.
 Next command, to resume exactly where this stopped:
-the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: why the
-all-four click at 5.13 s is never caught (`measure.py all-four`; a lead in Decisions,
-2026-11-03), then G4, the C++ port of Hum, Click and Noise, whose G3 rows pass.
+the listening checkpoint and the Reverb decision are Björn's. Unblocked meanwhile: fill
+`tools/tests/test_plugin.py` (presence tests per defining feature, each shown failing first),
+then the G4 open items below, then `ctest --preset fast`.
 
 ## Decisions
 
@@ -384,3 +386,59 @@ Two measurement defects, fixed in `measure.py all-four`, not in the plugin:
   vocal's sibilants alone read -3.8 dB. The health row now asks what it is for - whether the
   chain adds a step - outside the injected clicks (+/- 2 ms) and against the clean vocal in the
   same room (+1 dB allowed). Whether the clicks went is a separate row at EX-1's 95 %.
+
+### 2026-11-03 G5, Burg lost its order on a sung vowel (prototype and port)
+The first G5 null left the click case at -13.2 dBFS with identical repair decisions: the
+repaired content differed. On the exact input of the worst repair, the port's Burg stopped at
+order 27 (|mu| = 2.9) where the prototype's went on to 192. The textbook recursion for the
+denominator, d = (1 - mu^2) d - f[m+1]^2 - b[n-m-2]^2, subtracts nearly equal numbers once
+the error is small: on a sustained vowel d falls from ~2.6 to ~6e-10 by order 24, and the two
+implementations' summation orders (sequential against numpy's pairwise) then decide where it
+stops. Neither result was right: the prototype's recursion stopped early, at order 10-11, in
+**73 of 181** 40 ms windows of the test vocal, so its "AR(192)" repair was often an AR(10).
+Both now compute d directly at every order (|mu| <= 1 by Cauchy-Schwarz): 0 of 181 windows
+short, the 90 repair fits of the battery agree to 1e-8, and the click null is -138.5 dBFS.
+Regression: selftest `burg keeps the full repair order on a sung vowel (direct denominator)`
+(73 of 181 short on the commit before, 0 after) and the G5 click case.
+
+### 2026-11-03 G5, a runaway repair fell straight to the bridge
+With the full order back, one false repair on the clean vocal (1 sample, at the test vocal's
+first note change, 0.75 s) extrapolated past 4x the local peak: the model is fitted on the
+40 ms before the segment, the old note, and the backward extrapolation starts from the new
+one. The safety net's cosine bridge then left -21.9 dBFS where the two other false repairs
+leave -83 and -96. A runaway now falls back to the order-32 detection model first and to the
+bridge only after that: -40.2 dBFS. Regression: selftest `a runaway repair falls back to the
+detection model before the bridge` (-21.9 dBFS on the build with the direct Burg and no
+fallback - the commit before passes it only because its truncated Burg never ran away there)
+and the G5 `click-clean` case (-142.6 dBFS, the same 3 repairs).
+
+### 2026-11-03 G4, the port and what it changed in the prototype
+`Source/dsp/`: `Constants.h` (every constant, the prototype's name and value), `Hum.h`,
+`Click.h/.cpp`, `Spectral.h` (Noise and Reverb), `Engine.h/.cpp` (the STFT, the switch
+crossfade, the dry line, Listen, the Removed bands, Find and Estimate). The prototype's
+precision per stage is kept (hum and click in double, the spectral path in float; JUCE's FFT
+in float where numpy's is double, which is the -123 to -145 dBFS of the spectral nulls).
+Python's `round` is ties-to-even and several conversions land on .5 at some rate, so the port
+rounds with `std::nearbyint`. Every buffer is sized in `prepare`; a host block larger than
+announced is processed in chunks of max(block, hop). The processor smooths the continuous
+parameters at block rate as linear ramps (a parameter that does not move is exactly its value,
+which G5 needs), snaps them on the first block after prepare or a state load (the harness sets
+its flags after `prepareToPlay`), applies Trim per sample, and publishes the latency from the
+message thread (a 10 Hz timer; the harness calls `refreshLatency()` after its flags). One
+prototype change came with the port: **bypass is no longer trimmed** (rule 7: a wire).
+Harness: `--solo=hum|click|noise|reverb`, `--learn-at=<s>`, `--find`, `--estimate`, and
+`product` metrics (latency state, the click counters and repair log, the band energies over
+the render, the tracker, Learn's verdict, the reverb onsets, the plain values applied). The
+harness target lacked `JucePlugin_Name` / `JucePlugin_VersionString` (the template's bug,
+hidden until the processor compiled); added as the snapshot and test targets have them.
+
+### G4 open items (2026-11-03)
+- **Switch crossfades (rules 2 and 7).** The prototype hard-switches Hum on/off, Listen and
+  Bypass, and the port does the same so G5 can null. Each gets a 15 ms crossfade, in both, with
+  a test (`max_click_db` across the switch).
+- **The Learned noise profile is not in the plugin state yet** (`parameters.csv`: "Profile is
+  plugin state"): `State.h` `<Extra>`, with a round-trip test.
+- **Find and Estimate in the plugin** need the last 4 s of input: the shared `Analysis`
+  `AudioCopy` ring, wired with the editor (plugin-ui-bob); the harness runs them on `--in`.
+- **The editor** is still the template stub; `Source/oberli/` is in and waits for plugin-ui-bob.
+- **The tests**: `tools/tests/test_plugin.py` is the template scaffold (it names `outGain`).

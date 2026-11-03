@@ -118,7 +118,15 @@ set(PRODUCT_SOURCES
     Source/PluginEditor.cpp
     Source/PluginEditor.h
     Source/Params.h
-    Source/State.h)
+    Source/State.h
+    # the DSP, the hand port of sound design/prototype/cleanup_proto.py (G4)
+    Source/dsp/Constants.h
+    Source/dsp/Hum.h
+    Source/dsp/Click.h
+    Source/dsp/Click.cpp
+    Source/dsp/Spectral.h
+    Source/dsp/Engine.h
+    Source/dsp/Engine.cpp)
 
 # The family's shared code: Source/oberli/ is a byte copy of ~/bob-skills
 # tools/template-src/Source/oberli (Loudness, Analysis, References, RenderSafety, the
@@ -216,7 +224,8 @@ target_include_directories(CleanUpHarness PRIVATE Source "${CMAKE_CURRENT_BINARY
 target_compile_definitions(CleanUpHarness PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_STANDALONE_APPLICATION=1
-    PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0> ${PRODUCT_OBERLI_DEFINITIONS})
+    PRODUCT_IS_INSTRUMENT=$<IF:$<BOOL:${PRODUCT_IS_SYNTH}>,1,0> ${PRODUCT_OBERLI_DEFINITIONS}
+    JucePlugin_Name="$<TARGET_PROPERTY:CleanUp,JUCE_PLUGIN_NAME>" JucePlugin_VersionString="${PROJECT_VERSION}")
 # The harness compiles the plugin sources itself with its own copy of the modules (simple and
 # portable; Horizon Pad links the SharedCode library instead, which saves a compile).
 target_sources(CleanUpHarness PRIVATE ${PRODUCT_SOURCES})

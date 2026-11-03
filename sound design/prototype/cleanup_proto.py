@@ -432,6 +432,13 @@ def burg(x, order):
     """Burg's method. Returns `pred` with xhat[n] = sum_k pred[k] x[n-1-k].
 
     Checked in --selftest against a known AR(2) process.
+
+    The denominator is computed directly at every order, not by the textbook recursion
+    d = (1 - mu^2) d - f[m+1]^2 - b[n-m-2]^2. On a highly predictable source (a sustained vowel
+    over 40 ms) d falls from ~2.6 to ~6e-10 by order 24 and the recursion's subtraction is then
+    all rounding. Found at G5: the C++ port's sequential sums and numpy's pairwise ones left
+    the recursion at different orders in 29 of the 90 repair fits of the click battery - the
+    port stopped at order 27 with |mu| = 2.9, this file went on to 192 by luck.
     """
     x = np.asarray(x, dtype=np.float64)
     n = x.size
@@ -441,11 +448,12 @@ def burg(x, order):
     b = x.copy()
     a = np.zeros(order + 1)
     a[0] = 1.0
-    d = 2.0 * float(np.dot(x, x)) - x[0] ** 2 - x[-1] ** 2
     for m in range(order):
+        fm, bm = f[m + 1:n], b[0:n - m - 1]
+        d = float(np.dot(fm, fm)) + float(np.dot(bm, bm))
         if d <= 1.0e-300:
             break
-        mu = 2.0 * float(np.dot(f[m + 1:n], b[0:n - m - 1])) / d
+        mu = 2.0 * float(np.dot(fm, bm)) / d
         if not (abs(mu) < 0.999):
             break        # |mu| >= 1 is what makes the model non-minimum-phase in float
         a[: m + 2] = a[: m + 2] - mu * a[m + 1::-1]
@@ -453,7 +461,6 @@ def burg(x, order):
         bb = b[0:n - m - 1].copy()
         f[m + 1:n] = ff - mu * bb
         b[0:n - m - 1] = bb - mu * ff
-        d = (1.0 - mu * mu) * d - f[m + 1] ** 2 - b[n - m - 2] ** 2
     return -a[1:]
 
 
@@ -604,16 +611,10 @@ class ClickRepair:
         floor = undb(CLICK_ABS_FLOOR_DBFS)
         return abs(db(max(rr, floor)) - db(max(lr, floor))) > CLICK_MAX_STEP_DB
 
-    def _repair(self, buf, span_start, span_len, pred):
-        """Replaces the span, plus `xfade` samples each side so the crossfade never sits on
-        the click itself. (It did: for a 0.5 ms click, 16 of its 24 samples were inside the
-        two seams and the worst repair residual measured -10.8 dBFS instead of -30.)"""
+    def _extrapolate(self, buf, start, length, pred, w):
+        """Forward from the left context, backward from the right, crossfaded by w. None when
+        the result is not finite or exceeds CLICK_RUNAWAY_FACTOR x the local peak."""
         order = pred.size
-        xf = self.xfade
-        start = span_start - xf
-        length = span_len + 2 * xf
-        if start < order or start + length + order > buf.size:
-            return
         left = buf[start - order:start]
         right = buf[start + length:start + length + order]
         limit = CLICK_RUNAWAY_FACTOR * max(float(np.abs(left).max()),
@@ -632,12 +633,34 @@ class ClickRepair:
             bwd[length - 1 - i] = v
             hist[1:] = hist[:-1]
             hist[0] = v
-        t = (np.arange(length) + 0.5) / length
-        w = 0.5 * (1.0 + np.cos(math.pi * t))                         # raised cosine, 1 -> 0
         rep = w * fwd + (1.0 - w) * bwd
         if not np.isfinite(rep).all() or float(np.abs(rep).max()) > limit:
+            return None
+        return rep
+
+    def _repair(self, buf, span_start, span_len, pred, fallback=None):
+        """Replaces the span, plus `xfade` samples each side so the crossfade never sits on
+        the click itself. (It did: for a 0.5 ms click, 16 of its 24 samples were inside the
+        two seams and the worst repair residual measured -10.8 dBFS instead of -30.)
+
+        A runaway extrapolation falls back to `fallback` (the low-order detection model)
+        before the cosine bridge. The full AR(192) ran away at the note change of the test
+        vocal (a 1-sample false detection at 0.75 s), and the bridge it fell to left -21.9 dBFS
+        where the other false repairs leave -83 to -96."""
+        order = pred.size
+        xf = self.xfade
+        start = span_start - xf
+        length = span_len + 2 * xf
+        if start < order or start + length + order > buf.size:
+            return
+        t = (np.arange(length) + 0.5) / length
+        w = 0.5 * (1.0 + np.cos(math.pi * t))                         # raised cosine, 1 -> 0
+        rep = self._extrapolate(buf, start, length, pred, w)
+        if rep is None and fallback is not None:
+            rep = self._extrapolate(buf, start, length, fallback, w)
+        if rep is None:
             # the safety net: a cosine bridge between the two context ends, always bounded
-            rep = left[-1] * w + right[0] * (1.0 - w)
+            rep = buf[start - 1] * w + buf[start + length] * (1.0 - w)
         r = 0.5 * (1.0 - np.cos(math.pi * (np.arange(xf) + 0.5) / xf))
         rep[:xf] = buf[start:start + xf] * (1.0 - r) + rep[:xf] * r
         rep[length - xf:] = (buf[start + length - xf:start + length] * r
@@ -713,7 +736,8 @@ class ClickRepair:
                 rp = burg(src, self.repair_order)
                 repair_pred[0] = rp if np.any(rp) else pred
             for ch in range(2):
-                self._repair(td[:, ch], start, length, repair_pred[0])
+                self._repair(td[:, ch], start, length, repair_pred[0],
+                             pred if repair_pred[0] is not pred else None)
             self.caught += 1
             self.longest_samples = max(self.longest_samples, length)
             self.log.append((self.abs_base + start, length))
@@ -1094,8 +1118,8 @@ class CleanUp:
             self.dry = self.dry[-keep:]
 
         if p.bypass:
-            out = dry_aligned if self.alignment > 0 else x.copy()
-            return out * undb(p.trim)
+            # a wire (rule 7): latency-compensated and not trimmed
+            return dry_aligned if self.alignment > 0 else x.copy()
 
         hum_out = self.hum.process(x.copy(), p) if p.humOn else x.copy()
 
@@ -1396,6 +1420,32 @@ def selftest():
     got = sum(any(d < st + cl and d + dl > st for d, dl in cus.click.log) for st in spots)
     check("clicks in a sung note are not taken for edges (level step at two scales)",
           len(spots) >= 6 and got == len(spots), "%d of %d caught" % (got, len(spots)))
+
+    # 14. Burg defect found at G5: the textbook recursion for the denominator lost the order
+    # on a sung vowel. Every 40 ms window of the vocal must be fitted to the full repair order.
+    vv = _mat.vocal(48000.0, 6.0).mean(axis=1)
+    short = 0
+    windows = 0
+    for st in range(int(0.5 * 48000), int(5.5 * 48000), 960):
+        w = vv[st:st + 1920]
+        if np.abs(w).max() < 1.0e-3:
+            continue
+        windows += 1
+        r = burg(w, CLICK_REPAIR_AR_ORDER)
+        fitted = int(np.max(np.nonzero(r)[0]) + 1) if np.any(r) else 0
+        short += fitted < CLICK_REPAIR_AR_ORDER
+    check("burg keeps the full repair order on a sung vowel (direct denominator)", short == 0,
+          "%d of %d windows fitted short" % (short, windows))
+
+    # 15. Click defect found at G5: a runaway AR(192) repair fell straight to the cosine bridge.
+    # The test vocal's first note change (0.75 s) draws a 1-sample false detection whose
+    # full-order extrapolation runs away; the detection model must take over before the bridge.
+    v12 = _mat.vocal(48000.0, 6.0)[: int(1.2 * 48000)]
+    yv, cuv = render(v12, Params(clickOn=True, clickLength=3.5), fs=48000.0, block=512)
+    yv = yv[cuv.latency:]
+    rv12 = float(db(np.abs(yv - v12[:yv.shape[0]]).max()))
+    check("a runaway repair falls back to the detection model before the bridge", rv12 <= -35.0,
+          "%.1f dBFS on the clean vocal's first 1.2 s (%d repair)" % (rv12, cuv.click.caught))
 
     print("\n" + ("selftest: all good" if ok else "selftest: FAILURES above"))
     return 0 if ok else 1

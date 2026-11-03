@@ -159,7 +159,10 @@ const char* const kUsage =
     "  --reprepare-at=<t>:<rate>/<block>      prepareToPlay again mid-render; repeatable\n"
     "  --preset-at=<t>:<slug>       load a factory preset at t seconds; repeatable\n"
     "  --profile --warmup=<n>       time every processBlock; exclude n blocks from the distribution\n"
-    "  --solo=<part>                product-specific isolation (see the hooks at the end of Main.cpp)\n"
+    "  --solo=<part>                hum, click, noise or reverb: that module on, the other three off\n"
+    "  --learn-at=<s>               Clean Up: start Learn (one second of noise profile) at t seconds\n"
+    "  --find                       Clean Up: run Find on the --in file and report the mains frequency\n"
+    "  --estimate                   Clean Up: run Estimate on the --in file and report the RT60\n"
     "  --non-realtime               render as a bounce: setNonRealtime (true) (oberli/RenderSafety.h, check_bounce.py)\n"
     "  --list-params | --list-presets   JSON lists; exit\n";
 
@@ -185,7 +188,8 @@ Args parseArgs (int argc, char* argv[])
 {
     static const juce::StringArray known { "help", "seed", "sample-rate", "block", "max-block", "seconds", "preset", "param",
         "automate", "bend", "mod", "notes", "midi", "gate", "reprepare-at", "in", "signal", "out", "state-in", "state-out",
-        "profile", "preset-at", "warmup", "solo", "list-params", "list-presets", "non-realtime" };
+        "profile", "preset-at", "warmup", "solo", "list-params", "list-presets", "non-realtime",
+        "learn-at", "find", "estimate" };
     Args a;
     for (int i = 1; i < argc; ++i)
     {
@@ -439,17 +443,85 @@ double dbOf (double lin) { return lin > 0.0 ? 20.0 * std::log10 (lin) : -300.0; 
 } // namespace
 
 //==============================================================================
-// Product hooks (the two TODOs of the contract). The skeleton has no solo parts and no product
-// metrics; a product fills these in beside its DSP (Horizon Pad: layers, keyboard, mix pocket).
-static bool applySolo (juce::AudioProcessor&, const juce::String& part)
+// Product hooks: --solo (one module on, the other three off) and the `product` metrics (the
+// three click counters and the repair log, the Removed display's band energies over the render,
+// the latency state, the hum tracker, Learn's verdict, the reverb onsets, Find and Estimate).
+static bool applySolo (juce::AudioProcessor& processor, const juce::String& part)
 {
-    juce::ignoreUnused (part);
-    return false;   // unknown part: refused with exit 2
+    const char* modules[] = { Params::humOn, Params::clickOn, Params::noiseOn, Params::reverbOn };
+    const char* names[] = { "hum", "click", "noise", "reverb" };
+    int which = -1;
+    for (int i = 0; i < 4; ++i)
+        if (part == names[i]) which = i;
+    if (which < 0)
+        return false;
+    auto& apvts = dynamic_cast<CleanUpAudioProcessor&> (processor).parameters();
+    for (int i = 0; i < 4; ++i)
+        apvts.getParameter (modules[i])->setValueNotifyingHost (i == which ? 1.0f : 0.0f);
+    return true;
 }
 
-static juce::var productMetrics (const juce::AudioBuffer<float>&, double)
+static juce::var productMetrics (CleanUpAudioProcessor& processor, const juce::AudioBuffer<float>& input, bool find, bool estimate, double rate)
 {
-    return obj();
+    auto& e = processor.engine();
+    auto m = obj();
+    // the plain values the engine saw (the --param flags are normalised; G5 renders the
+    // prototype with exactly these)
+    auto plain = obj();
+    for (auto* p : processor.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+            set (plain, ranged->paramID.toRawUTF8(), (double) processor.parameters().getRawParameterValue (ranged->paramID)->load());
+    set (m, "params_plain", plain);
+    set (m, "latency_state", processor.getLatencySamples());
+    set (m, "alignment", e.alignment());
+    set (m, "frame", e.frameSize());
+    set (m, "hop", e.hopSize());
+    const auto& c = e.clickStage();
+    set (m, "clicks_caught", c.caught.load());
+    set (m, "clicks_missed", c.missed.load());
+    set (m, "clicks_longest_ms", 1000.0 * c.longestSamples.load() / rate);
+    juce::var repairs;
+    const int nLog = juce::jmin (c.logCount.load(), cleanup::ClickRepair::kLogSize);
+    for (int i = 0; i < nLog; ++i)
+    {
+        juce::var r;
+        r.append ((juce::int64) c.logStart[(size_t) i]);
+        r.append (c.logLength[(size_t) i]);
+        repairs.append (r);
+    }
+    set (m, "click_repairs", repairs);
+    set (m, "hum_tracked_hz", e.trackedHumHz());
+    set (m, "noise_profile_captured", e.noiseStage().profileCaptured());
+    set (m, "reverb_onsets", e.reverbStage().onsetCount());
+    juce::var inBands, remBands;
+    double removedSum = 0.0;
+    for (int b = 0; b < cleanup::k::NUM_BANDS; ++b)
+    {
+        inBands.append (e.inputTotal[(size_t) b]);
+        remBands.append (e.removedTotal[(size_t) b]);
+        removedSum += e.removedTotal[(size_t) b];
+    }
+    set (m, "input_bands", inBands);
+    set (m, "removed_bands", remBands);
+    set (m, "removed_total", removedSum);
+    set (m, "hops", (juce::int64) e.hopsDone);
+    if (find || estimate)
+    {
+        std::vector<float> mono ((size_t) input.getNumSamples());
+        for (int i = 0; i < input.getNumSamples(); ++i)
+            mono[(size_t) i] = 0.5f * (input.getSample (0, i) + input.getSample (input.getNumChannels() > 1 ? 1 : 0, i));
+        if (find)
+        {
+            const auto hz = cleanup::Engine::findHum (mono.data(), (int) mono.size(), rate);
+            set (m, "find_hz", hz ? juce::var (*hz) : juce::var());
+        }
+        if (estimate)
+        {
+            const auto t = cleanup::Engine::estimateTail (mono.data(), (int) mono.size(), rate);
+            set (m, "estimate_s", t ? juce::var (*t) : juce::var());
+        }
+    }
+    return m;
 }
 
 //==============================================================================
@@ -566,6 +638,10 @@ static int run (int argc, char* argv[])
         ramps.push_back (r);
     }
 
+    product->refreshLatency();   // the latency the applied parameters imply (message thread)
+    const double learnAt = args.has ("learn-at") ? numberOr (args.get ("learn-at"), "--learn-at") : -1.0;
+    bool learnSent = false;
+
     // -------- MIDI and input
     std::vector<int> notes;
     for (auto n : juce::StringArray::fromTokens (args.get ("notes"), ",", ""))
@@ -663,6 +739,13 @@ static int run (int argc, char* argv[])
         n = (int) juce::jmin ((juce::int64) n, total - pos);
         for (const auto& r : ramps)
             paramById (r.id)->setValueNotifyingHost ((float) juce::jlimit (0.0, 1.0, rampValue (r, now)));
+        if (! ramps.empty())
+            product->refreshLatency();
+        if (learnAt >= 0.0 && ! learnSent && now >= learnAt)
+        {
+            product->engine().requestLearn();
+            learnSent = true;
+        }
 
         midi.clear();
         if (isInstrument)
@@ -816,7 +899,8 @@ static int run (int argc, char* argv[])
         set (pr, "first_block_pct", firstBlockPct); set (pr, "warmup_blocks", warmup);
         set (root, "profile", pr);
     }
-    set (root, "product", productMetrics (out, rate));
+    if ((args.has ("find") || args.has ("estimate")) && signal.kind != "file") refuse ("--find and --estimate need --in=<file>");
+    set (root, "product", productMetrics (*product, signal.file, args.has ("find"), args.has ("estimate"), rate));
     std::cout << juce::JSON::toString (root, true) << std::endl;
 
     if (stateRefused.isNotEmpty()) { std::cerr << "error: --state-in " << stateRefused << std::endl; return 2; }
